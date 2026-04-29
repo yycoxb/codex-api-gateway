@@ -1,0 +1,42 @@
+﻿# Dependencies
+node_modules/
+
+# Runtime logs / temp files
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.tmp
+*.temp
+.cache/
+dist/
+build/
+
+# Local environment / secrets
+.env
+.env.*
+*.local
+*.secret
+*.token
+
+# Local Codex / gateway state exports
+config.json
+auth.json
+accounts.json
+accounts-*.json
+export*.json
+*.accounts.json
+.codex/
+.codex-api-gateway/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local backup files
+*.bak
+*.bak.*
+*.backup
+*.backup.*
