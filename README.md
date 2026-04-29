@@ -154,6 +154,36 @@ wakeup-history.json
 
 这些文件可能包含账号 token 或本地 API Key，**不要提交到 GitHub，不要分享给别人**。
 
+## 修改前备份与回滚
+
+项目内置了两个本地保护脚本，方便修改错代码时回退，不影响账号数据。
+
+修改前先创建 checkpoint：
+
+```powershell
+.\scripts\checkpoint.ps1
+```
+
+- 工作区干净时：创建本地备份分支。
+- 工作区已有修改时：检查敏感文件名后创建 checkpoint commit。
+- checkpoint 信息记录在 `.git/codex-last-checkpoint`。
+
+如果改错了，回到最近 checkpoint：
+
+```powershell
+.\scripts\rollback-last.ps1
+```
+
+如果当前还有未提交改动，脚本会要求输入 `ROLLBACK` 确认。  
+这个回滚只作用于当前 Git 仓库，不会碰：
+
+```text
+~/.codex-api-gateway/
+~/.codex/
+```
+
+未来让 Codex/AI 修改此项目时，也建议先读取 `AGENTS.md`。
+
 ## 项目结构
 
 ```text
