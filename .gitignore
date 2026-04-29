@@ -40,3 +40,8 @@ Thumbs.db
 *.bak.*
 *.backup
 *.backup.*
+
+# Local GitHub credential helper, not part of the public project
+gh-gcm.cmd
+scripts/gh-gcm.ps1
+

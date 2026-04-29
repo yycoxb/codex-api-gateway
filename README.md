@@ -1,69 +1,120 @@
-﻿# Codex API Gateway MVP
+﻿# Codex API Gateway
 
-独立本地 Codex API 代理服务。它读取本机 `~/.codex/auth.json` 的 OAuth token，在 `127.0.0.1` 启动一个 OpenAI 风格的 `/v1` API。
+一个运行在本机的 Codex API Gateway。它可以把本机 Codex OAuth 账号包装成 OpenAI 风格的本地 `/v1` API，并提供账号管理、额度查看、账号切换、API 服务集合和唤醒任务等管理界面。
 
-## 当前已实现
+> 本项目只提交源代码。每个使用者的账号、token、API Key、运行配置都会保存在自己电脑的用户目录中，不应该提交到 GitHub。
 
-- `GET /v1/models`
-- `POST /v1/chat/completions`，stream 模式已测通
-- 自动读取 `~/.codex/auth.json`
-- access token 过期时用 refresh token 刷新
+## 功能
+
+- 本地 OpenAI 风格接口：
+  - `GET /v1/models`
+  - `POST /v1/chat/completions`
+- 管理界面：`http://127.0.0.1:18080/_admin`
+- 多账号导入与切换
+- Codex OAuth 添加账号
+- Cockpit 兼容 JSON 导入/导出
+- API 服务账号集合
+- 按策略调用账号，例如优先使用快到期账号
+- 额度查看与自动刷新
+- 账号唤醒任务
 - 本地 API Key 鉴权：`Authorization: Bearer agt_codex_xxx`
 
-> 注意：`/v1/responses` 直通还不是稳定兼容层。当前建议优先使用 `/v1/chat/completions`。
+## 环境要求
 
-## 项目结构
+- Windows / macOS / Linux 均可运行 Node 服务
+- Node.js `>= 18`
+- 已拥有可用的 Codex / ChatGPT 账号
 
-```text
-src/
-  server.js            # CLI 入口：serve / doctor / import / rotate-key
-  gateway.js           # HTTP 服务、鉴权、路由、上游转发
-  account.js           # 读取 ~/.codex/auth.json，保存账号，刷新 token
-  jwt.js               # JWT payload 解码、过期判断、账号ID/邮箱提取
-  chat-completions.js  # /v1/chat/completions -> Codex responses 的转换层
-  sse.js               # SSE frame 解析工具
-  http-utils.js        # JSON/CORS 响应、读取请求体、API key 提取
-  config.js            # 加载配置、轮换本地 API key
-  storage.js           # JSON 文件读写、原子写入
-  constants.js         # 常量：路径、上游地址、模型列表
-  utils.js             # 时间、脱敏、API key 生成
-```
+Windows 用户可以直接使用项目里的 `.cmd` 启动脚本。
 
-## 启动
+## 下载与启动
+
+### 方式一：Git 克隆
 
 ```powershell
-cd C:\Users\15267\Downloads\codex-api-gateway
+git clone https://github.com/yycoxb/codex-api-gateway.git
+cd codex-api-gateway
+npm install
 npm start
 ```
 
-首次启动会创建：
+### 方式二：下载 ZIP
+
+在 GitHub 页面点击：
 
 ```text
-~/.codex-api-gateway/config.json
-~/.codex-api-gateway/account.json
+Code → Download ZIP
 ```
 
-查看状态：
+解压后进入目录：
 
 ```powershell
-npm run doctor
+npm install
+npm start
 ```
 
-重新导入当前 Codex 账号：
+### Windows 快捷启动
 
-```powershell
-node src/server.js import
+在 Windows 上也可以双击：
+
+```text
+Codex API Gateway.cmd
 ```
 
-轮换本地 API Key：
+停止服务：
 
-```powershell
-node src/server.js rotate-key
+```text
+Stop Codex API Gateway.cmd
 ```
 
-## 调用示例
+## 打开管理界面
 
-把启动时输出的 API key 填进去：
+服务启动后打开：
+
+```text
+http://127.0.0.1:18080/_admin
+```
+
+管理页可以查看：
+
+- Base URL
+- 本地 API Key
+- 当前账号
+- API 服务集合
+- 账号额度
+- 唤醒任务
+- 统计面板
+
+## 第一次添加账号
+
+进入管理页后点击：
+
+```text
+添加 / 导入账号
+```
+
+可选方式：
+
+1. **OAuth 授权**：按页面提示登录自己的 Codex 账号。
+2. **Token / JSON 导入**：导入自己的 `auth.json`、单账号 JSON 或 Cockpit 导出的账号数组。
+3. **本地导入**：读取当前电脑的 `~/.codex/auth.json`。
+
+导入后账号会保存到本机：
+
+```text
+~/.codex-api-gateway/accounts.json
+```
+
+## 在客户端中使用
+
+管理页里复制：
+
+```text
+Base URL: http://127.0.0.1:18080/v1
+API Key:  agt_codex_xxx
+```
+
+请求示例：
 
 ```powershell
 $env:CODEX_GATEWAY_KEY="agt_codex_xxx"
@@ -82,44 +133,49 @@ curl.exe -N http://127.0.0.1:18080/v1/chat/completions `
   -d '{"model":"gpt-5.4-mini","stream":true,"messages":[{"role":"user","content":"Reply with exactly: OK"}]}'
 ```
 
-## 管理界面\n\n浏览器打开：\n\n```text\nhttp://127.0.0.1:18080/_admin\n```\n\n页面功能：\n\n- 查看 Base URL / API Key / 当前账号\n- 复制地址和密钥\n- 测试 `/v1/models`\n- 测试 `/v1/chat/completions`\n- 轮换 API Key\n\n`/_admin/state` 会返回 JSON 状态，方便脚本读取。\n
+## 本地数据位置
 
-
-## 多账号导入
-
-管理页 `http://127.0.0.1:18080/_admin` 现在支持账号管理：
-
-- `导入当前 ~/.codex/auth.json`：把当前 Codex 官方登录账号导入账号池，并设为当前使用账号。
-- `粘贴 auth.json 导入`：把另一个账号的 `auth.json`、Cockpit 导出的单个账号 JSON，或 Cockpit 导出的账号数组粘贴进来导入。
-- `使用`：切换网关当前使用的账号。
-- `删除`：从网关账号池删除账号。
-
-账号池保存在：
+运行时数据默认保存在：
 
 ```text
-~/.codex-api-gateway/accounts.json
+~/.codex-api-gateway/
 ```
 
-兼容用的当前账号投影仍保存在：
+常见文件：
 
 ```text
-~/.codex-api-gateway/account.json
+config.json
+account.json
+accounts.json
+local-access.json
+local-access-stats.json
+wakeup-history.json
 ```
 
-## 账号唤醒
+这些文件可能包含账号 token 或本地 API Key，**不要提交到 GitHub，不要分享给别人**。
 
-管理页 `http://127.0.0.1:18080/_admin` 现在支持“账号唤醒”：
-
-1. 在账号列表左侧勾选一个或多个账号。
-2. 在“账号唤醒”区域选择模型，默认 `gpt-5.5`。
-3. 可修改提示词，默认 `Reply with exactly: OK`。
-4. 点击 `唤醒选中账号`。
-5. 点击 `查看历史` 可查看最近唤醒记录。
-
-唤醒历史保存到：
+## 项目结构
 
 ```text
-~/.codex-api-gateway/wakeup-history.json
+src/
+  server.js                 # CLI 入口
+  gateway.js                # HTTP 服务、鉴权、路由、上游转发
+  account.js                # 账号导入、保存、刷新 token
+  codex-oauth.js            # Codex OAuth 登录流程
+  codex-app.js              # Codex App auth/config 兼容
+  local-access.js           # 本地 API 服务集合
+  local-access-stats.js     # API 使用统计
+  quota.js                  # 额度读取与解析
+  wakeup.js                 # 账号唤醒
+  chat-completions.js       # /v1/chat/completions 转换层
+  admin-ui.js               # 管理页面
+  config.js                 # 配置与 API key
+  constants.js              # 常量与路径
 ```
 
-说明：唤醒本质是对选中账号发起一次轻量 Codex 请求。它能产生活动记录，但是否影响官方刷新/重置时间由 Codex 上游规则决定。
+## 安全提醒
+
+- 不要公开自己的 `auth.json`、`accounts.json`、`config.json`、`.env`。
+- 不要把完整 access token / refresh token / session token 发给别人。
+- 如果误提交 token，请立刻删除仓库历史并重新生成/撤销相关凭据。
+- 本服务默认只监听 `127.0.0.1`，不建议暴露到公网。
