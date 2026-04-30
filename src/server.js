@@ -7,6 +7,7 @@ import { createServer } from './gateway.js';
 import { readJson } from './storage.js';
 import { startWakeupScheduler } from './wakeup.js';
 import { startQuotaRefreshScheduler } from './quota.js';
+import { startTokenKeeper } from './token-keeper.js';
 import { mask } from './utils.js';
 
 async function doctor() {
@@ -45,6 +46,7 @@ async function serve() {
 
   await startWakeupScheduler();
   await startQuotaRefreshScheduler();
+  startTokenKeeper();
 
   const server = createServer(config);
   server.listen(config.port, config.host, () => {

@@ -32,6 +32,7 @@ import { scheduleCodexAppRestart, scheduleCodexAppRestartWithTask } from './code
 import { getProxyAccountIdsForRequest, loadLocalAccessConfig, saveLocalAccessConfig } from './local-access.js';
 import { clearLocalAccessStats, extractUsageCapture, loadLocalAccessStats, recordLocalAccessStats } from './local-access-stats.js';
 import { repairSessionVisibility } from './session-visibility.js';
+import { getTokenKeeperState, runTokenKeeperNow } from './token-keeper.js';
 import {
   cancelCodexOAuthLogin,
   completeCodexOAuthLogin,
@@ -468,6 +469,7 @@ async function handleAdmin(req, res, config) {
     localAccessStats: await loadLocalAccessStats(),
     wakeupSchedule: await loadWakeupSchedule(),
     quotaAutoRefresh: await loadQuotaRefreshSchedule(),
+    tokenKeeper: await getTokenKeeperState(),
   });
 }
 
@@ -635,6 +637,16 @@ async function handleQuotaAutoRefreshRunNow(req, res) {
   return jsonResponse(res, 200, await runQuotaRefreshNow());
 }
 
+async function handleTokenKeeperState(req, res) {
+  return jsonResponse(res, 200, await getTokenKeeperState());
+}
+
+async function handleTokenKeeperRunNow(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  return jsonResponse(res, 200, await runTokenKeeperNow({ force: payload.force === true }));
+}
+
 async function handleLocalAccessStats(req, res) {
   return jsonResponse(res, 200, await loadLocalAccessStats());
 }
@@ -791,6 +803,8 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/refresh-quotas') return await handleRefreshQuotas(req, res);
       if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/_admin/quota-auto-refresh') return await handleQuotaAutoRefresh(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/quota-auto-refresh/run-now') return await handleQuotaAutoRefreshRunNow(req, res);
+      if (req.method === 'GET' && u.pathname === '/_admin/token-keeper') return await handleTokenKeeperState(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/token-keeper/run-now') return await handleTokenKeeperRunNow(req, res);
       if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/_admin/local-access') return await handleLocalAccess(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/local-access/stats') return await handleLocalAccessStats(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear') return await handleClearLocalAccessStats(req, res);

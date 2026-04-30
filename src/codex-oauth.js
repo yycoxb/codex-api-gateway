@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import {
   AUTH_ENDPOINT,
+  CODEX_OAUTH_SCOPES,
   CLIENT_ID,
   OAUTH_CALLBACK_PORT,
   OAUTH_PENDING_PATH,
@@ -10,7 +11,7 @@ import {
 import { readJson, writeJson } from './storage.js';
 import { nowMs } from './utils.js';
 
-const SCOPES = 'openid profile email offline_access';
+const SCOPES = CODEX_OAUTH_SCOPES;
 const ORIGINATOR = 'codex_vscode';
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000;
 const OAUTH_PORT_IN_USE_CODE = 'CODEX_OAUTH_PORT_IN_USE';

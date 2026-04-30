@@ -6,6 +6,18 @@ import { readJson, writeJson } from './storage.js';
 import { nowMs } from './utils.js';
 import { decodeJwtPayload, extractAccountId, extractEmail, isTokenExpired } from './jwt.js';
 
+const TOKEN_REFRESH_SKEW_MS = 5 * 60 * 1000;
+const PROACTIVE_REFRESH_INTERVAL_MS = 8 * 24 * 60 * 60 * 1000;
+const REFRESH_REAUTH_PATTERNS = [
+  'refresh_token_reused',
+  'token_invalidated',
+  'invalid_grant',
+  'invalid refresh token',
+  'authentication token has been invalidated',
+];
+
+const accountTokenLocks = new Map();
+
 export function codexHome() {
   const raw = process.env.CODEX_HOME?.trim();
   return raw ? raw.replace(/^["']|["']$/g, '') : path.join(os.homedir(), '.codex');
@@ -133,6 +145,295 @@ function extractAuthInfo(tokens) {
     planType: accessAuth.chatgpt_plan_type || idAuth.chatgpt_plan_type || null,
     subscriptionActiveUntil: idAuth.chatgpt_subscription_active_until || null,
   };
+}
+
+function tokenExpMs(token) {
+  const exp = Number(decodeJwtPayload(token)?.exp || 0);
+  return exp > 0 ? exp * 1000 : 0;
+}
+
+function normalizeOptional(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return text ? text : null;
+}
+
+function parseLastRefreshMs(value) {
+  if (value === undefined || value === null || value === '') return null;
+  if (typeof value === 'number') return epochToMs(value);
+  if (value instanceof Date) return value.getTime();
+  const text = String(value).trim();
+  if (!text) return null;
+  const asNumber = Number(text);
+  if (Number.isFinite(asNumber) && asNumber > 0) return epochToMs(asNumber);
+  const parsed = Date.parse(text);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function emailFromTokens(tokens) {
+  const idEmail = tokens?.id_token ? extractEmail(tokens.id_token) : null;
+  if (idEmail && idEmail !== 'local-codex-account') return idEmail;
+  const accessPayload = decodeJwtPayload(tokens?.access_token) || {};
+  return accessPayload?.['https://api.openai.com/profile']?.email || null;
+}
+
+function userIdFromTokens(tokens) {
+  const tokenInfo = extractAuthInfo(tokens || {});
+  if (tokenInfo.userId) return tokenInfo.userId;
+  const idPayload = decodeJwtPayload(tokens?.id_token) || {};
+  return idPayload.sub || null;
+}
+
+function authTokensFromObject(auth, fallbackAccount = null) {
+  const source = auth?.tokens || auth || {};
+  const idToken = source.id_token || source.idToken || fallbackAccount?.tokens?.id_token || null;
+  const accessToken = source.access_token || source.accessToken || null;
+  const refreshToken = source.refresh_token || source.refreshToken || null;
+  if (!accessToken) return null;
+  return {
+    id_token: idToken,
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    account_id: source.account_id || source.accountId || auth?.account_id || auth?.accountId || auth?.account?.id || null,
+  };
+}
+
+function buildOfficialAuthSnapshot(auth, fallbackAccount = null) {
+  if (!auth || auth.auth_mode === 'apikey' || auth.OPENAI_API_KEY) return null;
+  const tokens = authTokensFromObject(auth, fallbackAccount);
+  if (!tokens?.access_token || !tokens?.id_token) return null;
+
+  const tokenInfo = extractAuthInfo(tokens);
+  const accountId = normalizeOptional(
+    tokens.account_id ||
+    extractAccountId(tokens.access_token, tokens.id_token) ||
+    auth.account_id ||
+    auth.accountId ||
+    auth.account?.id
+  );
+  const email = normalizeOptional(
+    auth.email ||
+    auth.user?.email ||
+    emailFromTokens(tokens) ||
+    fallbackAccount?.email
+  );
+  if (!email) return null;
+
+  return {
+    tokens: {
+      id_token: tokens.id_token,
+      access_token: tokens.access_token,
+      refresh_token: normalizeOptional(tokens.refresh_token),
+    },
+    email,
+    accountId,
+    userId: normalizeOptional(auth.user_id || auth.userId || auth.user?.id || tokenInfo.userId || userIdFromTokens(tokens)),
+    planType: normalizeOptional(auth.plan_type || auth.planType || auth.account?.planType || tokenInfo.planType),
+    subscriptionActiveUntil: normalizeOptional(
+      auth.subscription_active_until ||
+      auth.subscriptionActiveUntil ||
+      auth.account?.subscription_active_until ||
+      auth.account?.subscriptionActiveUntil ||
+      tokenInfo.subscriptionActiveUntil
+    ),
+    lastRefreshAt: parseLastRefreshMs(auth.last_refresh || auth.lastRefresh || auth.updated_at || auth.updatedAt),
+  };
+}
+
+function officialSnapshotMatchesAccount(snapshot, account) {
+  if (!snapshot || !account) return false;
+  if (snapshot.email && account.email && snapshot.email.toLowerCase() !== account.email.toLowerCase()) {
+    return false;
+  }
+
+  const accountId = normalizeOptional(account.accountId || account.account_id);
+  if (snapshot.accountId && accountId && snapshot.accountId !== accountId) return false;
+
+  const userId = normalizeOptional(account.userId || account.user_id);
+  if (snapshot.userId && userId && snapshot.userId !== userId) return false;
+
+  return Boolean(snapshot.email || snapshot.accountId || snapshot.userId);
+}
+
+function officialSnapshotHasTokenDelta(account, snapshot) {
+  if (!account?.tokens || !snapshot?.tokens) return false;
+  return (
+    (snapshot.tokens.id_token && account.tokens.id_token !== snapshot.tokens.id_token) ||
+    (snapshot.tokens.access_token && account.tokens.access_token !== snapshot.tokens.access_token) ||
+    (snapshot.tokens.refresh_token && normalizeOptional(account.tokens.refresh_token) !== snapshot.tokens.refresh_token)
+  );
+}
+
+function shouldAcceptOfficialSnapshot(account, snapshot, { allowStale = false } = {}) {
+  if (!officialSnapshotHasTokenDelta(account, snapshot)) return false;
+  if (allowStale) return true;
+
+  const accountUpdatedAt = epochToMs(account.tokenUpdatedAt || account.token_updated_at) || 0;
+  if (snapshot.lastRefreshAt && snapshot.lastRefreshAt + 5_000 >= accountUpdatedAt) return true;
+
+  const accountExpired = isTokenExpired(account.tokens.access_token);
+  const snapshotFresh = !isTokenExpired(snapshot.tokens.access_token);
+  if (accountExpired && snapshotFresh) return true;
+
+  const accountExp = tokenExpMs(account.tokens.access_token);
+  const snapshotExp = tokenExpMs(snapshot.tokens.access_token);
+  if (snapshotExp && accountExp && snapshotExp > accountExp + TOKEN_REFRESH_SKEW_MS) return true;
+
+  return false;
+}
+
+function applyOfficialSnapshot(account, snapshot) {
+  let changed = false;
+  let tokenChanged = false;
+  const nextTokens = { ...(account.tokens || {}) };
+
+  if (snapshot.tokens.id_token && nextTokens.id_token !== snapshot.tokens.id_token) {
+    nextTokens.id_token = snapshot.tokens.id_token;
+    changed = true;
+    tokenChanged = true;
+  }
+  if (snapshot.tokens.access_token && nextTokens.access_token !== snapshot.tokens.access_token) {
+    nextTokens.access_token = snapshot.tokens.access_token;
+    changed = true;
+    tokenChanged = true;
+  }
+  if (snapshot.tokens.refresh_token && normalizeOptional(nextTokens.refresh_token) !== snapshot.tokens.refresh_token) {
+    nextTokens.refresh_token = snapshot.tokens.refresh_token;
+    changed = true;
+    tokenChanged = true;
+  }
+
+  if (changed) account.tokens = nextTokens;
+  if (snapshot.accountId && normalizeOptional(account.accountId) !== snapshot.accountId) {
+    account.accountId = snapshot.accountId;
+    changed = true;
+  }
+  if (snapshot.userId && normalizeOptional(account.userId) !== snapshot.userId) {
+    account.userId = snapshot.userId;
+    changed = true;
+  }
+  if (snapshot.planType && normalizeOptional(account.planType) !== snapshot.planType) {
+    account.planType = snapshot.planType;
+    changed = true;
+  }
+  if (snapshot.subscriptionActiveUntil && normalizeOptional(account.subscriptionActiveUntil) !== snapshot.subscriptionActiveUntil) {
+    account.subscriptionActiveUntil = snapshot.subscriptionActiveUntil;
+    changed = true;
+  }
+
+  if (tokenChanged) {
+    account.tokenGeneration = Number(account.tokenGeneration ?? account.token_generation ?? 0) + 1;
+    account.tokenUpdatedAt = snapshot.lastRefreshAt || nowMs();
+    account.tokenSourceMode = 'managed';
+    account.requiresReauth = false;
+    account.reauthReason = null;
+  }
+  if (changed) account.updatedAt = nowMs();
+  return changed;
+}
+
+function extractTokenErrorCode(bodyText) {
+  try {
+    const value = JSON.parse(bodyText);
+    const direct = typeof value?.error === 'string' ? value.error : null;
+    return (
+      direct ||
+      value?.error?.code ||
+      value?.code ||
+      value?.error_code ||
+      null
+    );
+  } catch {
+    return null;
+  }
+}
+
+export function isReauthRequiredRefreshError(message) {
+  const lower = String(message || '').toLowerCase();
+  return REFRESH_REAUTH_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+function formatRefreshFailure(status, bodyText) {
+  const code = extractTokenErrorCode(bodyText);
+  return `刷新 token 失败: status=${status}${code ? `, error_code=${code}` : ''}, body_len=${bodyText.length}`;
+}
+
+async function requestTokenRefresh(refreshToken, currentIdToken) {
+  const jsonResp = await fetch(TOKEN_ENDPOINT, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      client_id: CLIENT_ID,
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+    }),
+  });
+  const jsonText = await jsonResp.text();
+  if (!jsonResp.ok) {
+    const code = String(extractTokenErrorCode(jsonText) || '').toLowerCase();
+    const lower = jsonText.toLowerCase();
+    const canFallbackToForm = [400, 415].includes(Number(jsonResp.status)) &&
+      !isReauthRequiredRefreshError(code || lower) &&
+      /unsupported|content-type|invalid_request|json|parse/.test(lower);
+    if (!canFallbackToForm) {
+      throw new Error(formatRefreshFailure(jsonResp.status, jsonText));
+    }
+
+    const formBody = new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: CLIENT_ID,
+    });
+    const formResp = await fetch(TOKEN_ENDPOINT, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: formBody,
+    });
+    const formText = await formResp.text();
+    if (!formResp.ok) throw new Error(formatRefreshFailure(formResp.status, formText));
+    return parseTokenRefreshResponse(formText, refreshToken, currentIdToken);
+  }
+
+  return parseTokenRefreshResponse(jsonText, refreshToken, currentIdToken);
+}
+
+function parseTokenRefreshResponse(text, refreshToken, currentIdToken) {
+  let data;
+  try {
+    data = JSON.parse(text);
+  } catch (err) {
+    throw new Error(`解析 token 刷新响应失败: ${err.message}`);
+  }
+  if (!data.access_token) throw new Error('刷新 token 响应缺少 access_token');
+  return {
+    id_token: data.id_token || currentIdToken,
+    access_token: data.access_token,
+    refresh_token: data.refresh_token || refreshToken,
+  };
+}
+
+async function reloadAccountForRefresh(account) {
+  if (!account?.id) return account;
+  const store = await loadAccountStore();
+  return store.accounts.find((item) => item.id === account.id) || account;
+}
+
+async function withAccountTokenLock(account, fn) {
+  const key = String(account?.id || account?.accountId || account?.email || 'default');
+  const previous = accountTokenLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  const chained = previous.catch(() => {}).then(() => current);
+  accountTokenLocks.set(key, chained);
+  await previous.catch(() => {});
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (accountTokenLocks.get(key) === chained) accountTokenLocks.delete(key);
+  }
 }
 
 function normalizeStore(raw) {
@@ -428,45 +729,124 @@ export async function saveAccount(account) {
   return store.accounts.find((item) => item.id === account.id) || account;
 }
 
-export async function refreshAccountIfNeeded(account, force = false) {
+export async function syncAccountFromOfficialAuthSnapshot(account, options = {}) {
+  const authPath = path.join(codexHome(), 'auth.json');
+  const auth = await readJson(authPath, null);
+  const snapshot = buildOfficialAuthSnapshot(auth, account);
+  if (!snapshot) return { account, changed: false, reason: 'no_oauth_snapshot' };
+  if (!officialSnapshotMatchesAccount(snapshot, account)) {
+    return { account, changed: false, reason: 'account_mismatch' };
+  }
+  if (!shouldAcceptOfficialSnapshot(account, snapshot, options)) {
+    return { account, changed: false, reason: 'snapshot_not_newer' };
+  }
+
+  const next = { ...account, tokens: { ...(account.tokens || {}) } };
+  if (!applyOfficialSnapshot(next, snapshot)) {
+    return { account, changed: false, reason: 'unchanged' };
+  }
+  const saved = options.save === false ? next : await saveAccount(next);
+  return {
+    account: saved,
+    changed: true,
+    source: authPath,
+    tokenGeneration: saved.tokenGeneration ?? saved.token_generation ?? null,
+  };
+}
+
+export function isManagedAuthRefreshDue(account) {
+  if (!account?.tokens?.access_token) return false;
+  if (isTokenExpired(account.tokens.access_token)) return true;
+  const tokenUpdatedAt = epochToMs(account.tokenUpdatedAt || account.token_updated_at) || 0;
+  return tokenUpdatedAt <= nowMs() - PROACTIVE_REFRESH_INTERVAL_MS;
+}
+
+async function markAccountRequiresReauth(account, reason) {
+  account.requiresReauth = true;
+  account.reauthReason = reason;
+  account.updatedAt = nowMs();
+  return await saveAccount(account);
+}
+
+async function performTokenRefresh(account, reason = 'refresh') {
+  const refreshToken = normalizeOptional(account.tokens?.refresh_token);
+  if (!refreshToken) {
+    const message = 'access_token 已过期且没有 refresh_token，请先重新登录 Codex';
+    await markAccountRequiresReauth(account, message);
+    throw new Error(message);
+  }
+
+  try {
+    const refreshedTokens = await requestTokenRefresh(refreshToken, account.tokens.id_token);
+    account.tokens = refreshedTokens;
+    account.accountId = account.accountId || extractAccountId(account.tokens.access_token, account.tokens.id_token) || null;
+    const tokenInfo = extractAuthInfo(account.tokens);
+    account.authProvider = account.authProvider || tokenInfo.authProvider;
+    account.userId = account.userId || tokenInfo.userId;
+    account.teamName = account.teamName || tokenInfo.teamName || '个人账户';
+    account.planType = tokenInfo.planType || account.planType;
+    account.subscriptionActiveUntil = tokenInfo.subscriptionActiveUntil || account.subscriptionActiveUntil;
+    account.tokenGeneration = Number(account.tokenGeneration ?? account.token_generation ?? 0) + 1;
+    account.tokenUpdatedAt = nowMs();
+    account.tokenSourceMode = 'managed';
+    account.requiresReauth = false;
+    account.reauthReason = null;
+    account.refreshReason = reason;
+    account.updatedAt = nowMs();
+    return await saveAccount(account);
+  } catch (err) {
+    const message = String(err?.message || err);
+    if (isReauthRequiredRefreshError(message)) {
+      await markAccountRequiresReauth(account, message);
+    }
+    throw err;
+  }
+}
+
+async function refreshAccountLocked(account, force = false, reason = force ? 'force' : 'prepare') {
+  account = await reloadAccountForRefresh(account);
+  if (!account?.tokens?.access_token) return account;
+
+  const snapshotBefore = await syncAccountFromOfficialAuthSnapshot(account).catch((err) => ({
+    account,
+    changed: false,
+    error: err,
+  }));
+  account = snapshotBefore.account || account;
+
+  if (account.requiresReauth) {
+    throw new Error(account.reauthReason || '账号需要重新登录 Codex');
+  }
   if (!force && !isTokenExpired(account.tokens.access_token)) return account;
 
-  const refreshToken = account.tokens.refresh_token;
-  if (!refreshToken) {
-    throw new Error('access_token 已过期且没有 refresh_token，请先重新登录 Codex');
+  const refreshTokenBefore = normalizeOptional(account.tokens.refresh_token);
+  try {
+    return await performTokenRefresh(account, reason);
+  } catch (err) {
+    const synced = await syncAccountFromOfficialAuthSnapshot(account).catch(() => null);
+    const syncedAccount = synced?.account || null;
+    const refreshTokenAfter = normalizeOptional(syncedAccount?.tokens?.refresh_token);
+    if (synced?.changed && refreshTokenAfter && refreshTokenAfter !== refreshTokenBefore) {
+      if (!force && !isTokenExpired(syncedAccount.tokens.access_token)) return syncedAccount;
+      return await performTokenRefresh(syncedAccount, `${reason}:retry-after-official-snapshot`);
+    }
+    throw err;
   }
+}
 
-  const body = new URLSearchParams({
-    grant_type: 'refresh_token',
-    refresh_token: refreshToken,
-    client_id: CLIENT_ID,
+export async function refreshAccountIfNeeded(account, force = false) {
+  return await withAccountTokenLock(account, async () => refreshAccountLocked(account, force));
+}
+
+export async function keepaliveAccount(accountId, reason = 'TokenKeeper 授权保活') {
+  const account = await getAccountById(accountId);
+  return await withAccountTokenLock(account, async () => {
+    const latest = await reloadAccountForRefresh(account);
+    if (!isManagedAuthRefreshDue(latest)) {
+      await syncAccountFromOfficialAuthSnapshot(latest).catch(() => null);
+      const afterSync = await reloadAccountForRefresh(latest);
+      if (!isManagedAuthRefreshDue(afterSync)) return afterSync;
+    }
+    return await refreshAccountLocked(latest, true, reason);
   });
-  const resp = await fetch(TOKEN_ENDPOINT, {
-    method: 'POST',
-    headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body,
-  });
-  const text = await resp.text();
-  if (!resp.ok) {
-    throw new Error(`刷新 token 失败: status=${resp.status}, body_len=${text.length}`);
-  }
-
-  const data = JSON.parse(text);
-  account.tokens = {
-    id_token: data.id_token || account.tokens.id_token,
-    access_token: data.access_token,
-    refresh_token: data.refresh_token || refreshToken,
-  };
-  account.accountId = account.accountId || extractAccountId(account.tokens.access_token, account.tokens.id_token) || null;
-  const tokenInfo = extractAuthInfo(account.tokens);
-  account.authProvider = account.authProvider || tokenInfo.authProvider;
-  account.userId = account.userId || tokenInfo.userId;
-  account.teamName = account.teamName || tokenInfo.teamName || '个人账户';
-  account.planType = tokenInfo.planType || account.planType;
-  account.subscriptionActiveUntil = tokenInfo.subscriptionActiveUntil || account.subscriptionActiveUntil;
-  account.tokenGeneration = Number(account.tokenGeneration ?? account.token_generation ?? 0) + 1;
-  account.tokenUpdatedAt = nowMs();
-  account.updatedAt = nowMs();
-
-  return await saveAccount(account);
 }
