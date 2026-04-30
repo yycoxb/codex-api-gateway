@@ -9,8 +9,8 @@ const MAX_HISTORY_ITEMS = 200;
 const DEFAULT_INTERVAL_MINUTES = 240;
 const MIN_INTERVAL_MINUTES = 1;
 const MAX_INTERVAL_MINUTES = 60 * 24 * 14;
-const DEFAULT_SCHEDULE_MODE = 'interval';
-const DEFAULT_DAILY_TIME = '08:00';
+const DEFAULT_SCHEDULE_MODE = 'daily';
+const DEFAULT_DAILY_TIME = '20:00';
 
 let wakeupScheduleTimer = null;
 let wakeupScheduleRunning = false;
@@ -188,7 +188,7 @@ function clampIntervalMinutes(value) {
 }
 
 function normalizeScheduleMode(value) {
-  return String(value || DEFAULT_SCHEDULE_MODE).toLowerCase() === 'daily' ? 'daily' : 'interval';
+  return 'daily';
 }
 
 function normalizeDailyTime(value) {

@@ -541,10 +541,8 @@ export function renderAdminHtml() {
     }
 
     .codex-wakeup-hero {
-      display: grid;
-      grid-template-columns: minmax(0, 1.55fr) minmax(320px, .9fr);
-      gap: 20px;
-      padding: 24px;
+      display: block;
+      padding: 28px 30px;
       border: 1px solid var(--border);
       border-radius: 20px;
       background:
@@ -564,7 +562,7 @@ export function renderAdminHtml() {
 
     .codex-wakeup-hero-copy p {
       margin: 0;
-      max-width: 760px;
+      max-width: 980px;
       color: var(--text-secondary);
       line-height: 1.55;
       font-weight: 600;
@@ -583,9 +581,10 @@ export function renderAdminHtml() {
 
     .codex-wakeup-stats {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: repeat(3, minmax(160px, 220px));
       gap: 12px;
       margin-top: 18px;
+      max-width: 720px;
     }
 
     .codex-wakeup-stat {
@@ -640,15 +639,43 @@ export function renderAdminHtml() {
 
     .schedule-card {
       margin-top: 14px;
-      padding: 14px;
+      padding: 16px;
       border: 1px solid var(--border-light);
       border-radius: var(--radius-lg);
       background: rgba(248, 252, 255, .76);
     }
 
-    .schedule-grid {
+    .schedule-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .schedule-switch {
+      margin: 0;
+      gap: 8px;
+    }
+
+    .schedule-mode-pill {
+      min-height: 28px;
+      display: inline-flex;
+      align-items: center;
+      padding: 0 10px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-full);
+      color: var(--text-secondary);
+      background: var(--bg-tertiary);
+      font-size: 12px;
+      font-weight: 900;
+      white-space: nowrap;
+    }
+
+    .daily-schedule-row {
       display: grid;
-      grid-template-columns: minmax(120px, 1fr) minmax(120px, 1fr) minmax(120px, 1fr) 130px;
+      grid-template-columns: minmax(170px, 220px) auto auto auto;
       gap: 10px;
       align-items: end;
     }
@@ -666,9 +693,16 @@ export function renderAdminHtml() {
 
     .wakeup-task-layout {
       display: grid;
-      grid-template-columns: minmax(320px, .9fr) minmax(360px, 1.1fr);
+      grid-template-columns: minmax(360px, .78fr) minmax(520px, 1.22fr);
       gap: 20px;
       align-items: start;
+    }
+
+    .wakeup-right-stack {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      min-width: 0;
     }
 
     .wakeup-panel {
@@ -2228,6 +2262,10 @@ export function renderAdminHtml() {
         align-items: stretch;
         flex-direction: column;
       }
+
+      .daily-schedule-row {
+        grid-template-columns: 1fr 1fr;
+      }
     }
 
     @media (max-width: 680px) {
@@ -2242,6 +2280,7 @@ export function renderAdminHtml() {
       .config-row { grid-template-columns: 42px minmax(0, 1fr) auto; }
       .config-row .copy-extra { display: none; }
       .codex-wakeup-stats { grid-template-columns: 1fr; }
+      .daily-schedule-row { grid-template-columns: 1fr; }
       .stats-grid,
       .stats-config-grid { grid-template-columns: 1fr; }
       .stats-account-row { grid-template-columns: 1fr; align-items: stretch; }
@@ -2398,43 +2437,6 @@ export function renderAdminHtml() {
               <div class="codex-wakeup-stat"><span>最近结果</span><strong id="wakeupLastStatus">-</strong></div>
             </div>
           </div>
-          <div class="codex-wakeup-runtime-card">
-            <label class="form-label">模型</label>
-            <input class="input" id="wakeupModel" value="gpt-5.5" />
-            <label class="form-label">提示词</label>
-            <textarea class="textarea" id="wakeupPrompt">Reply with exactly: OK</textarea>
-            <div class="wakeup-actions-row">
-              <button class="primary" id="runWakeupBtn">${icons.play} 唤醒选中</button>
-              <button id="refreshSelectedQuotaBtn">${icons.refresh} 刷新用量</button>
-              <button id="loadWakeupHistoryBtn">历史</button>
-            </div>
-            <div class="schedule-card">
-              <label class="form-label"><input type="checkbox" id="wakeupScheduleEnabled" /> &#23450;&#26102;&#21796;&#37266;&#36873;&#20013;&#36134;&#21495;</label>
-              <div class="schedule-grid">
-                <div>
-                  <label class="form-label">&#21796;&#37266;&#26041;&#24335;</label>
-                  <select class="input" id="wakeupScheduleMode">
-                    <option value="interval">&#38388;&#38548;&#23450;&#26102;</option>
-                    <option value="daily">&#27599;&#26085;&#22266;&#23450;&#26102;&#38388;</option>
-                  </select>
-                </div>
-                <div>
-                  <label class="form-label">&#38388;&#38548;&#20998;&#38047;</label>
-                  <input class="input" id="wakeupScheduleInterval" type="number" min="1" value="240" />
-                </div>
-                <div>
-                  <label class="form-label">&#27599;&#22825;&#26102;&#38388;</label>
-                  <input class="input" id="wakeupScheduleDailyTime" type="time" value="08:00" />
-                </div>
-                <button class="primary" id="saveWakeupScheduleBtn">&#20445;&#23384;&#23450;&#26102;</button>
-              </div>
-              <div class="wakeup-actions-row">
-                <button id="runWakeupScheduleNowBtn">&#31435;&#21363;&#36816;&#34892;&#23450;&#26102;</button>
-                <button id="disableWakeupScheduleBtn">&#20851;&#38381;&#23450;&#26102;</button>
-              </div>
-              <div class="schedule-status" id="wakeupScheduleStatus">&#23450;&#26102;&#21796;&#37266;&#26410;&#21551;&#29992;&#12290;</div>
-            </div>
-          </div>
         </section>
 
         <div class="wakeup-task-layout">
@@ -2453,18 +2455,56 @@ export function renderAdminHtml() {
             <div class="wakeup-account-list" id="wakeupAccountList"></div>
           </section>
 
-          <section class="panel-card wakeup-panel">
-            <div class="card-head">
-              <div>
-                <h2>任务状态</h2>
-                <p class="panel-subtitle">显示本次唤醒结果和最近历史。</p>
+          <div class="wakeup-right-stack">
+            <section class="panel-card wakeup-control-panel">
+              <div class="card-head">
+                <div>
+                  <h2>运行设置</h2>
+                  <p class="panel-subtitle">选择模型、提示词和每日固定唤醒时间。</p>
+                </div>
               </div>
-              <button id="clearWakeupStatusBtn">清空显示</button>
-            </div>
-            <div class="wakeup-status-list" id="wakeupStatusList">
-              <div class="empty-state">还没有运行唤醒任务。</div>
-            </div>
-          </section>
+              <div class="codex-wakeup-runtime-card">
+                <label class="form-label">模型</label>
+                <input class="input" id="wakeupModel" value="gpt-5.5" />
+                <label class="form-label">提示词</label>
+                <textarea class="textarea" id="wakeupPrompt">Reply with exactly: OK</textarea>
+                <div class="wakeup-actions-row">
+                  <button class="primary" id="runWakeupBtn">${icons.play} 唤醒选中</button>
+                  <button id="refreshSelectedQuotaBtn">${icons.refresh} 刷新用量</button>
+                  <button id="loadWakeupHistoryBtn">历史</button>
+                </div>
+                <div class="schedule-card">
+                  <div class="schedule-card-head">
+                    <label class="switch-row schedule-switch"><input type="checkbox" id="wakeupScheduleEnabled" /> <span>每天定时唤醒选中账号</span></label>
+                    <span class="schedule-mode-pill">每日固定时间</span>
+                  </div>
+                  <div class="daily-schedule-row">
+                    <div>
+                      <label class="form-label">每天时间</label>
+                      <input class="input" id="wakeupScheduleDailyTime" type="time" value="20:00" />
+                    </div>
+                    <button class="primary" id="saveWakeupScheduleBtn">保存定时</button>
+                    <button id="runWakeupScheduleNowBtn">立即运行</button>
+                    <button id="disableWakeupScheduleBtn">关闭定时</button>
+                  </div>
+                  <div class="schedule-status" id="wakeupScheduleStatus">定时唤醒未启用。</div>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel-card wakeup-panel">
+              <div class="card-head">
+                <div>
+                  <h2>任务状态</h2>
+                  <p class="panel-subtitle">显示本次唤醒结果和最近历史。</p>
+                </div>
+                <button id="clearWakeupStatusBtn">清空显示</button>
+              </div>
+              <div class="wakeup-status-list" id="wakeupStatusList">
+                <div class="empty-state">还没有运行唤醒任务。</div>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </section>
@@ -3297,12 +3337,6 @@ function renderWakeupStats() {
   updateSelectedCount();
 }
 
-function syncWakeupScheduleModeControls() {
-  const mode = $('wakeupScheduleMode') ? $('wakeupScheduleMode').value : 'interval';
-  if ($('wakeupScheduleInterval')) $('wakeupScheduleInterval').disabled = mode === 'daily';
-  if ($('wakeupScheduleDailyTime')) $('wakeupScheduleDailyTime').disabled = mode !== 'daily';
-}
-
 function renderQuotaAutoRefresh() {
   const schedule = (state.data && state.data.quotaAutoRefresh) || {};
   if ($('quotaAutoRefreshEnabled')) $('quotaAutoRefreshEnabled').checked = !!schedule.enabled;
@@ -3355,35 +3389,31 @@ async function runQuotaAutoRefreshNow() {
 
 function renderWakeupSchedule() {
   const schedule = (state.data && state.data.wakeupSchedule) || {};
-  const mode = schedule.mode === 'daily' ? 'daily' : 'interval';
   if ($('wakeupScheduleEnabled')) $('wakeupScheduleEnabled').checked = !!schedule.enabled;
-  if ($('wakeupScheduleMode')) $('wakeupScheduleMode').value = mode;
-  if ($('wakeupScheduleInterval')) $('wakeupScheduleInterval').value = String(schedule.intervalMinutes || 240);
-  if ($('wakeupScheduleDailyTime')) $('wakeupScheduleDailyTime').value = schedule.dailyTime || '08:00';
-  syncWakeupScheduleModeControls();
+  if ($('wakeupScheduleDailyTime')) $('wakeupScheduleDailyTime').value = schedule.dailyTime || '20:00';
   const status = $('wakeupScheduleStatus');
   if (!status) return;
   const last = schedule.lastResult;
   const nextText = schedule.nextRunAt ? formatShortDate(schedule.nextRunAt) : '-';
   const lastText = schedule.lastRunAt ? formatShortDate(schedule.lastRunAt) : '-';
   const resultText = last ? ((last.ok ? '\u6210\u529f ' : '\u5931\u8d25 ') + (last.successCount || 0) + '/' + (last.count || 0)) : '-';
-  const modeText = mode === 'daily'
-    ? ('\u6bcf\u5929 ' + escapeHtml(schedule.dailyTime || '08:00'))
-    : ('\u6bcf ' + escapeHtml(schedule.intervalMinutes || 240) + ' \u5206\u949f');
   if (schedule.enabled) {
-    status.innerHTML = '\u5df2\u542f\u7528 \u00b7 ' + modeText + ' \u00b7 ' + escapeHtml((schedule.accountIds || []).length) + ' \u4e2a\u8d26\u53f7<br>\u4e0b\u6b21\uff1a' + escapeHtml(nextText) + '<br>\u4e0a\u6b21\uff1a' + escapeHtml(lastText) + ' \u00b7 ' + escapeHtml(resultText) + (schedule.running ? '<br>\u6b63\u5728\u8fd0\u884c\u4e2d...' : '');
+    const legacyInterval = schedule.mode && schedule.mode !== 'daily';
+    const modeText = legacyInterval
+      ? ('旧版间隔定时：每 ' + escapeHtml(schedule.intervalMinutes || 240) + ' 分钟，保存后会切换为每日固定时间')
+      : ('每天 ' + escapeHtml(schedule.dailyTime || '20:00'));
+    status.innerHTML = '已启用 · ' + modeText + ' · ' + escapeHtml((schedule.accountIds || []).length) + ' 个账号<br>下次：' + escapeHtml(nextText) + '<br>上次：' + escapeHtml(lastText) + ' · ' + escapeHtml(resultText) + (schedule.running ? '<br>正在运行中...' : '');
   } else {
-    status.innerHTML = '\u672a\u542f\u7528\u3002\u4fdd\u5b58\u65f6\u4f1a\u4f7f\u7528\u5f53\u524d\u9009\u4e2d\u7684\u8d26\u53f7\u3001\u6a21\u578b\u548c\u63d0\u793a\u8bcd\u3002\u53ef\u9009\u201c\u95f4\u9694\u5b9a\u65f6\u201d\u6216\u201c\u6bcf\u65e5\u56fa\u5b9a\u65f6\u95f4\u201d\u3002' + (last ? '<br>\u4e0a\u6b21\uff1a' + escapeHtml(lastText) + ' \u00b7 ' + escapeHtml(resultText) : '');
+    status.innerHTML = '未启用。保存时会使用当前选中的账号、模型和提示词，并按每天固定时间运行。' + (last ? '<br>上次：' + escapeHtml(lastText) + ' · ' + escapeHtml(resultText) : '');
   }
 }
 
 function buildWakeupSchedulePayload(enabled) {
-  const mode = $('wakeupScheduleMode') ? $('wakeupScheduleMode').value : 'interval';
   return {
     enabled: !!enabled,
-    mode: mode === 'daily' ? 'daily' : 'interval',
-    intervalMinutes: Number($('wakeupScheduleInterval').value || 240),
-    dailyTime: $('wakeupScheduleDailyTime') ? ($('wakeupScheduleDailyTime').value || '08:00') : '08:00',
+    mode: 'daily',
+    intervalMinutes: 1440,
+    dailyTime: $('wakeupScheduleDailyTime') ? ($('wakeupScheduleDailyTime').value || '20:00') : '20:00',
     accountIds: selectedAccountIds(),
     model: $('wakeupModel').value.trim() || 'gpt-5.5',
     prompt: $('wakeupPrompt').value.trim() || 'Reply with exactly: OK',
@@ -4138,7 +4168,6 @@ $('loadWakeupHistoryBtn').onclick = loadWakeupHistory;
 $('saveWakeupScheduleBtn').onclick = function() { saveWakeupSchedule(); };
 $('disableWakeupScheduleBtn').onclick = function() { $('wakeupScheduleEnabled').checked = false; saveWakeupSchedule(false); };
 $('runWakeupScheduleNowBtn').onclick = runWakeupScheduleNow;
-$('wakeupScheduleMode').onchange = syncWakeupScheduleModeControls;
 $('selectAllWakeupBtn').onclick = function() {
   allAccountIds().forEach(function(id) { state.selectedWakeupIds.add(id); });
   syncSelectionControls();
