@@ -7,7 +7,7 @@ export function renderAdminHtml() {
     eye: svg('<path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"></path><circle cx="12" cy="12" r="3"></circle>'),
     folderPlus: svg('<path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z"></path><path d="M12 10v6"></path><path d="M9 13h6"></path>'),
     database: svg('<ellipse cx="12" cy="5" rx="8" ry="3"></ellipse><path d="M4 5v6c0 1.7 3.6 3 8 3s8-1.3 8-3V5"></path><path d="M4 11v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6"></path>'),
-    refresh: svg('<path d="M21 12a9 9 0 0 1-15.3 6.4"></path><path d="M3 12A9 9 0 0 1 18.3 5.6"></path><path d="M18 3v5h-5"></path><path d="M6 21v-5h5"></path>'),
+    refresh: svg('<g class="refresh-icon-swoosh"><path d="M19.8 9.5A7.7 7.7 0 0 0 6.1 6.4L4 8.7"></path><path d="M4 4.7v4h4"></path><path d="M4.2 14.5a7.7 7.7 0 0 0 13.7 3.1l2.1-2.3"></path><path d="M20 19.3v-4h-4"></path></g><g class="refresh-icon-spark"><path d="M12 3.2l.5 1 .95.5-.95.5-.5 1-.5-1-.95-.5.95-.5z" fill="currentColor" stroke="none"></path><circle cx="18.8" cy="5.9" r=".9" fill="currentColor" stroke="none"></circle></g>'),
     power: svg('<path d="M12 2v10"></path><path d="M18.4 6.6a9 9 0 1 1-12.8 0"></path>'),
     grid: svg('<rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect>'),
     square: svg('<rect x="5" y="5" width="14" height="14" rx="2"></rect>'),
@@ -403,6 +403,36 @@ export function renderAdminHtml() {
     .icon-btn .icon-svg {
       width: 14px;
       height: 14px;
+    }
+
+    .refresh-icon-swoosh {
+      transform-box: fill-box;
+      transform-origin: center;
+    }
+
+    .refresh-icon-spark {
+      transform-box: fill-box;
+      transform-origin: center;
+      opacity: .88;
+    }
+
+    button:hover:not(:disabled) .refresh-icon-swoosh {
+      animation: refresh-spin-pop .72s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    button:hover:not(:disabled) .refresh-icon-spark {
+      animation: refresh-spark-pop .72s cubic-bezier(.2, .8, .2, 1);
+    }
+
+    @keyframes refresh-spin-pop {
+      0% { transform: rotate(0deg) scale(1); }
+      55% { transform: rotate(210deg) scale(1.08); }
+      100% { transform: rotate(360deg) scale(1); }
+    }
+
+    @keyframes refresh-spark-pop {
+      0%, 100% { opacity: .72; transform: scale(.86); }
+      45% { opacity: 1; transform: scale(1.22); }
     }
 
     .strip-icon .icon-svg,
