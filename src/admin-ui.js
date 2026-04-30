@@ -264,6 +264,7 @@ export function renderAdminHtml() {
     .status-pill,
     .current-tag,
     .member-tag,
+    .default-tag,
     .tier-badge {
       display: inline-flex;
       align-items: center;
@@ -848,6 +849,11 @@ export function renderAdminHtml() {
       border-color: var(--primary);
       box-shadow: 0 0 0 2px var(--primary-light);
       background: rgba(37, 99, 235, .05);
+    }
+
+    .codex-app-account-card.api-member {
+      border-color: rgba(37, 99, 235, .20);
+      background: rgba(37, 99, 235, .035);
     }
 
     .codex-app-account-card .account-email {
@@ -1515,6 +1521,17 @@ export function renderAdminHtml() {
       box-shadow: 0 0 0 3px rgba(59, 130, 246, .14);
     }
 
+    .default-tag {
+      min-height: 24px;
+      padding: 0 10px;
+      border: 1px solid rgba(148, 163, 184, .24);
+      background: rgba(148, 163, 184, .10);
+      color: var(--text-secondary);
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: .01em;
+    }
+
     .tier-badge {
       min-height: 24px;
       min-width: 58px;
@@ -1973,6 +1990,13 @@ export function renderAdminHtml() {
       box-shadow: inset 0 0 0 1px rgba(212, 175, 55, .12);
     }
 
+    .codex-app-account-card.api-member:not(.active) {
+      border-color: rgba(245, 208, 111, .24);
+      background:
+        radial-gradient(circle at 100% 0%, rgba(245, 208, 111, .08), transparent 42%),
+        rgba(29, 24, 13, .50);
+    }
+
     .codex-local-access-card,
     .codex-app-hero,
     .wakeup-service-card,
@@ -2111,6 +2135,13 @@ export function renderAdminHtml() {
       box-shadow:
         0 0 0 3px rgba(245, 208, 111, .14),
         0 0 12px rgba(245, 208, 111, .42);
+    }
+
+    .default-tag {
+      border-color: rgba(245, 208, 111, .18);
+      background: rgba(255, 255, 255, .045);
+      color: var(--text-muted);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .04);
     }
 
     .tier-badge {
@@ -3473,23 +3504,33 @@ function renderCodexAppAccounts() {
   if (!box || !state.data) return;
   const accounts = sortedAccounts();
   const app = state.data.codexApp || {};
+  const apiServiceActive = isApiServiceActive();
+  const localAccessIds = new Set((state.data.localAccess && state.data.localAccess.accountIds) || []);
   if (!accounts.length) {
     box.innerHTML = '<div class="empty-state">暂无账号，请先导入账号。</div>';
     return;
   }
   box.innerHTML = accounts.map(function(account) {
-    const isAppCurrent = account.id === app.matchedGatewayAccountId;
-    const isGatewayCurrent = account.id === state.data.currentAccountId;
+    const isAppCurrent = !apiServiceActive && account.id === app.matchedGatewayAccountId;
+    const isGatewayCurrent = !apiServiceActive && account.id === state.data.currentAccountId;
+    const isGatewayDefault = apiServiceActive && account.id === state.data.currentAccountId;
+    const apiMember = apiServiceActive && localAccessIds.has(account.id);
+    const badges = (apiMember ? '<span class="member-tag">API成员</span>' : '') +
+      (isGatewayCurrent ? '<span class="current-tag">网关当前</span>' : '') +
+      (isAppCurrent ? '<span class="current-tag">App 已登录</span>' : '') +
+      (isGatewayDefault ? '<span class="default-tag" title="API 服务模式下不是正在调用的账号，只是单账号模式/手动切换的默认值">单账号默认</span>' : '');
+    const useLabel = apiServiceActive ? '设为单账号默认' : '设为网关当前';
+    const useDisabled = (isGatewayCurrent || isGatewayDefault) ? ' disabled' : '';
     const plan = planLabel(account.planType);
-    return '<div class="codex-app-account-card ' + (isAppCurrent ? 'active' : '') + '">' +
+    return '<div class="codex-app-account-card ' + (isAppCurrent ? 'active ' : '') + (apiMember ? 'api-member ' : '') + '">' +
       '<div class="account-top" style="margin-bottom:0">' +
         '<div class="account-title"><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (isGatewayCurrent ? '<span class="current-tag">网关当前</span>' : '') + (isAppCurrent ? '<span class="current-tag">App 已登录</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + badges + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="small-line">使用 ' + escapeHtml(loginLabel(account)) + ' 登录 | 用户 ID: ' + escapeHtml(maskId(account.userId || account.accountId)) + '</div>' +
       '<div class="inline-actions" style="justify-content:flex-start">' +
         '<button class="primary" data-switch-codex-app="' + escapeHtml(account.id) + '">${icons.server} 登录到 Codex App</button>' +
-        '<button data-use-account="' + escapeHtml(account.id) + '" ' + (isGatewayCurrent ? 'disabled' : '') + '>设为网关当前</button>' +
+        '<button data-use-account="' + escapeHtml(account.id) + '"' + useDisabled + '>' + useLabel + '</button>' +
       '</div>' +
     '</div>';
   }).join('');
