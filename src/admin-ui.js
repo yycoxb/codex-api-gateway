@@ -1158,6 +1158,34 @@ export function renderAdminHtml() {
       width: min(560px, 100%);
     }
 
+    .export-format-modal {
+      width: min(620px, 100%);
+    }
+
+    .export-format-body {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .export-format-help,
+    .export-token-warning {
+      padding: 12px 14px;
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border-light);
+      background: rgba(248, 251, 255, .82);
+      color: var(--text-secondary);
+      font-size: 13px;
+      line-height: 1.55;
+      font-weight: 700;
+    }
+
+    .export-token-warning {
+      border-color: rgba(245, 196, 81, .28);
+      background: rgba(245, 196, 81, .10);
+      color: #9a5b00;
+    }
+
     .account-add-tabs {
       display: flex;
       gap: 6px;
@@ -2569,6 +2597,33 @@ export function renderAdminHtml() {
     </div>
   </div>
 
+  <div class="modal-overlay" id="exportAccountsModal" aria-hidden="true">
+    <div class="modal export-format-modal" role="dialog" aria-modal="true" aria-labelledby="exportAccountsModalTitle">
+      <div class="modal-header">
+        <h2 class="modal-title" id="exportAccountsModalTitle">${icons.upload} 导出账号</h2>
+        <button class="icon-btn" id="exportAccountsModalCloseBtn" title="关闭">&times;</button>
+      </div>
+      <div class="modal-body export-format-body">
+        <p class="section-desc">即将导出 <b id="exportAccountsCount">0</b> 个账号的完整 OAuth tokens。请选择目标平台格式。</p>
+        <div>
+          <label class="form-label" for="exportFormatSelect">导出格式</label>
+          <select class="input" id="exportFormatSelect">
+            <option value="gateway">gateway（本项目）</option>
+            <option value="cockpit-tools">cockpit-tools</option>
+            <option value="sub2api">sub2api</option>
+            <option value="cpa">cpa / token storage</option>
+          </select>
+        </div>
+        <div class="export-format-help" id="exportFormatHelp">gateway：本项目原生迁移包，包含 accounts 字段，可再次导入本项目。</div>
+        <div class="export-token-warning">导出的 JSON 等同登录凭证。请只保存在你信任的位置，不要提交到 GitHub 或发送给他人。</div>
+      </div>
+      <div class="modal-footer">
+        <button id="exportAccountsCancelBtn">取消</button>
+        <button class="primary" id="exportAccountsConfirmBtn">导出 JSON</button>
+      </div>
+    </div>
+  </div>
+
   <div class="modal-overlay" id="apiPoolModal" aria-hidden="true">
     <div class="modal api-pool-modal" role="dialog" aria-modal="true" aria-labelledby="apiPoolModalTitle">
       <div class="modal-header">
@@ -2706,9 +2761,18 @@ const state = {
   oauthLoginId: null,
   oauthUrl: '',
   oauthPollTimer: null,
-  oauthCompleting: false
+  oauthCompleting: false,
+  exportAccountIds: [],
+  exportFormat: 'gateway'
 };
 const $ = (id) => document.getElementById(id);
+
+const exportFormatHelpText = {
+  gateway: 'gateway：本项目原生迁移包，包含 accounts 字段，可再次导入本项目。',
+  'cockpit-tools': 'cockpit-tools：保持 Cockpit Tools 兼容的账号数组格式。',
+  sub2api: 'sub2api：生成 sub2api-data 批量导入结构，包含 openai/oauth credentials。',
+  cpa: 'cpa：生成 CPA / Codex token storage 结构；多账号时导出为 token storage 数组。'
+};
 
 function toast(text) {
   const el = $('toast');
@@ -2752,9 +2816,16 @@ function maskId(value) {
   return maskMiddle(value, 3, 3);
 }
 
-function exportFileName(count) {
+function exportFileName(count, format) {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-  return 'codex_accounts_' + count + '_' + stamp + '.json';
+  const key = String(format || 'gateway').replace(/_/g, '-');
+  const segment = ({
+    gateway: 'gateway',
+    'cockpit-tools': 'cockpit_tools',
+    sub2api: 'sub2api',
+    cpa: 'cpa'
+  })[key] || 'gateway';
+  return 'codex_' + segment + '_accounts_' + count + '_' + stamp + '.json';
 }
 
 function downloadTextFile(filename, text) {
@@ -4024,29 +4095,80 @@ async function loadWakeupHistory() {
   setOutput(data);
 }
 
-async function exportAccountsJson(accountIds) {
+function selectedExportFormat() {
+  const select = $('exportFormatSelect');
+  return select ? select.value : (state.exportFormat || 'gateway');
+}
+
+function syncExportFormatHelp() {
+  const format = selectedExportFormat();
+  state.exportFormat = format;
+  if ($('exportFormatHelp')) {
+    $('exportFormatHelp').textContent = exportFormatHelpText[format] || exportFormatHelpText.gateway;
+  }
+}
+
+function closeExportAccountsModal() {
+  const modal = $('exportAccountsModal');
+  if (modal) {
+    modal.classList.remove('show');
+    modal.setAttribute('aria-hidden', 'true');
+  }
+}
+
+function exportAccountsJson(accountIds) {
   const ids = Array.isArray(accountIds) ? accountIds.filter(Boolean) : [];
   if (!ids.length) return toast('请先选择要导出的账号');
-  if (!confirm('即将导出 ' + ids.length + ' 个账号的完整 OAuth tokens。\\n\\n导出的 JSON 等同登录凭证，请只保存在你信任的位置，确定继续吗？')) return;
-  setOutput('正在导出账号 JSON...');
-  const res = await fetch('/_admin/export-accounts', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountIds: ids })
-  });
-  const data = await res.json();
-  if (!res.ok || !data.ok) {
-    setOutput(data);
-    return toast('导出失败');
+  state.exportAccountIds = ids;
+  if ($('exportAccountsCount')) $('exportAccountsCount').textContent = String(ids.length);
+  if ($('exportFormatSelect')) $('exportFormatSelect').value = state.exportFormat || 'gateway';
+  syncExportFormatHelp();
+  const modal = $('exportAccountsModal');
+  if (modal) {
+    modal.classList.add('show');
+    modal.setAttribute('aria-hidden', 'false');
   }
-  const json = JSON.stringify(data.accounts || [], null, 2);
-  downloadTextFile(exportFileName((data.accounts || []).length), json);
-  setOutput({
-    ok: true,
-    count: data.count,
-    message: '已生成 Cockpit 兼容账号导出文件。为避免泄露，运行输出不显示 tokens。'
-  });
-  toast('导出完成');
+}
+
+async function confirmExportAccountsJson() {
+  const ids = Array.isArray(state.exportAccountIds) ? state.exportAccountIds.filter(Boolean) : [];
+  if (!ids.length) return toast('请先选择要导出的账号');
+  const format = selectedExportFormat();
+  const confirmBtn = $('exportAccountsConfirmBtn');
+  if (confirmBtn) confirmBtn.disabled = true;
+  setOutput('正在导出账号 JSON...');
+  try {
+    const res = await fetch('/_admin/export-accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ accountIds: ids, format: format })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) {
+      setOutput(data);
+      return toast('导出失败');
+    }
+    const content = Object.prototype.hasOwnProperty.call(data, 'content') ? data.content : (data.accounts || []);
+    const count = Number(data.count || (data.accounts || []).length || ids.length);
+    const filename = data.filename || exportFileName(count, data.format || format);
+    const json = JSON.stringify(content, null, 2);
+    downloadTextFile(filename, json);
+    closeExportAccountsModal();
+    setOutput({
+      ok: true,
+      format: data.format || format,
+      count: data.count,
+      filename: filename,
+      documents: Array.isArray(data.documents) ? data.documents.length : 0,
+      message: '已生成账号导出文件。为避免泄露，运行输出不显示 tokens。'
+    });
+    toast('导出完成');
+  } catch (err) {
+    setOutput(String(err.message || err));
+    return toast('导出失败');
+  } finally {
+    if (confirmBtn) confirmBtn.disabled = false;
+  }
 }
 
 document.addEventListener('click', function(event) {
@@ -4105,6 +4227,11 @@ document.addEventListener('change', function(event) {
 $('addAccountBtn').onclick = openApiPoolModal;
 $('overviewImportAccountBtn').onclick = function() { openAddAccountModal('oauth'); };
 $('overviewExportSelectedBtn').onclick = function() { exportAccountsJson(selectedAccountIds()); };
+$('exportAccountsModalCloseBtn').onclick = closeExportAccountsModal;
+$('exportAccountsCancelBtn').onclick = closeExportAccountsModal;
+$('exportAccountsConfirmBtn').onclick = confirmExportAccountsJson;
+$('exportAccountsModal').onclick = function(event) { if (event.target === $('exportAccountsModal')) closeExportAccountsModal(); };
+$('exportFormatSelect').onchange = syncExportFormatHelp;
 $('accountAddModalCloseBtn').onclick = closeAddAccountModal;
 $('accountAddCancelBtn').onclick = closeAddAccountModal;
 $('accountAddModal').onclick = function(event) { if (event.target === $('accountAddModal')) closeAddAccountModal(); };

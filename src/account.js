@@ -75,6 +75,69 @@ function compactObject(value) {
   );
 }
 
+function stringValue(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function numberValue(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function normalizeExportFormat(format) {
+  const raw = String(format || 'gateway').trim().toLowerCase().replace(/_/g, '-');
+  if (!raw || raw === 'gateway' || raw === 'codex-api-gateway') return 'gateway';
+  if (raw === 'cockpit' || raw === 'cockpit-tools') return 'cockpit-tools';
+  if (raw === 'sub2api') return 'sub2api';
+  if (raw === 'cpa') return 'cpa';
+  throw new Error(`不支持的导出格式: ${format}`);
+}
+
+function normalizeTimestampToIso(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+    const parsed = Date.parse(trimmed);
+    return Number.isFinite(parsed) ? new Date(parsed).toISOString() : trimmed;
+  }
+  const ms = epochToMs(value);
+  if (!ms) return null;
+  const date = new Date(ms);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function exportTimestampNoMillis() {
+  return new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function exportFileStamp() {
+  return new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+}
+
+function sanitizeFileNameSegment(input, fallback = 'account') {
+  const normalized = String(input || '')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1F]/g, '_')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized || fallback;
+}
+
+function exportFileName(count, format) {
+  const segment = {
+    gateway: 'gateway',
+    'cockpit-tools': 'cockpit_tools',
+    sub2api: 'sub2api',
+    cpa: 'cpa',
+  }[format] || 'gateway';
+  return `codex_${segment}_accounts_${count}_${exportFileStamp()}.json`;
+}
+
 function accountExportObject(account) {
   const tokenInfo = account.tokens ? extractAuthInfo(account.tokens) : {};
   const authMode = account.authMode || account.auth_mode || 'oauth';
@@ -91,6 +154,7 @@ function accountExportObject(account) {
     subscription_active_until: account.subscriptionActiveUntil || account.subscription_active_until || tokenInfo.subscriptionActiveUntil || null,
     account_id: account.accountId || account.account_id || null,
     organization_id: account.organizationId || account.organization_id || null,
+    account_name: account.accountName || account.account_name || undefined,
     account_structure: account.accountStructure || account.account_structure || 'personal',
     tokens: account.tokens ? {
       id_token: account.tokens.id_token,
@@ -108,6 +172,155 @@ function accountExportObject(account) {
     last_used: msToEpochSeconds(account.lastUsedAt || account.last_used),
   };
   return compactObject(exported);
+}
+
+function exportAuthPayload(account) {
+  const payload = decodeJwtPayload(account?.tokens?.id_token) || {};
+  const authPayload = payload['https://api.openai.com/auth'];
+  return authPayload && typeof authPayload === 'object' ? authPayload : {};
+}
+
+function resolveExportAccountId(account) {
+  const authPayload = exportAuthPayload(account);
+  return (
+    stringValue(account.account_id) ||
+    stringValue(authPayload.chatgpt_account_id) ||
+    stringValue(authPayload.account_id)
+  );
+}
+
+function resolveExportUserId(account) {
+  const authPayload = exportAuthPayload(account);
+  const idPayload = decodeJwtPayload(account?.tokens?.id_token) || {};
+  return (
+    stringValue(account.user_id) ||
+    stringValue(authPayload.chatgpt_user_id) ||
+    stringValue(authPayload.user_id) ||
+    stringValue(idPayload.sub)
+  );
+}
+
+function resolveExportOrganizationId(account) {
+  const authPayload = exportAuthPayload(account);
+  return stringValue(account.organization_id) || stringValue(authPayload.organization_id);
+}
+
+function resolveExportPlanType(account) {
+  const authPayload = exportAuthPayload(account);
+  return stringValue(account.plan_type) || stringValue(authPayload.chatgpt_plan_type);
+}
+
+function resolveExportSubscriptionExpiresAt(account) {
+  const authPayload = exportAuthPayload(account);
+  return (
+    normalizeTimestampToIso(account.subscription_active_until) ||
+    normalizeTimestampToIso(authPayload.chatgpt_subscription_active_until)
+  );
+}
+
+function resolveExportAccessTokenExpiry(account) {
+  const accessPayload = decodeJwtPayload(account?.tokens?.access_token) || {};
+  const idPayload = decodeJwtPayload(account?.tokens?.id_token) || {};
+  const accessExp = numberValue(accessPayload.exp);
+  if (accessExp != null) return normalizeTimestampToIso(accessExp);
+  const idExp = numberValue(idPayload.exp);
+  return idExp != null ? normalizeTimestampToIso(idExp) : null;
+}
+
+function assertOAuthExportable(accounts, format) {
+  if (!['sub2api', 'cpa'].includes(format)) return;
+  const missing = accounts.find((account) => !account?.tokens?.access_token);
+  if (missing) {
+    throw new Error(`账号 ${missing.email || missing.id || '(unknown)'} 缺少 OAuth access_token，无法导出为 ${format}`);
+  }
+}
+
+function buildSub2apiCredentials(account) {
+  const credentials = {
+    access_token: account.tokens.access_token,
+  };
+  const expiresAt = resolveExportAccessTokenExpiry(account);
+  if (expiresAt) credentials.expires_at = expiresAt;
+  if (account.tokens.refresh_token?.trim()) credentials.refresh_token = account.tokens.refresh_token.trim();
+  if (account.tokens.id_token?.trim()) credentials.id_token = account.tokens.id_token.trim();
+  if (account.email?.trim()) credentials.email = account.email.trim();
+
+  const accountId = resolveExportAccountId(account);
+  if (accountId) credentials.chatgpt_account_id = accountId;
+  const userId = resolveExportUserId(account);
+  if (userId) credentials.chatgpt_user_id = userId;
+  const organizationId = resolveExportOrganizationId(account);
+  if (organizationId) credentials.organization_id = organizationId;
+  const planType = resolveExportPlanType(account);
+  if (planType) credentials.plan_type = planType;
+  const subscriptionExpiresAt = resolveExportSubscriptionExpiresAt(account);
+  if (subscriptionExpiresAt) credentials.subscription_expires_at = subscriptionExpiresAt;
+  return credentials;
+}
+
+function toSub2apiAccount(account) {
+  return {
+    name: account.account_name?.trim() || account.email || account.id,
+    platform: 'openai',
+    type: 'oauth',
+    credentials: buildSub2apiCredentials(account),
+    concurrency: 0,
+    priority: 0,
+  };
+}
+
+function toCpaTokenStorage(account) {
+  return {
+    id_token: account.tokens?.id_token || '',
+    access_token: account.tokens?.access_token || '',
+    refresh_token: account.tokens?.refresh_token?.trim() || '',
+    account_id: resolveExportAccountId(account) || '',
+    last_refresh: new Date().toISOString(),
+    email: account.email || '',
+    type: 'codex',
+    expired: resolveExportAccessTokenExpiry(account) || '',
+  };
+}
+
+function buildCpaDocumentFileName(account, index, count) {
+  const stamp = exportFileStamp();
+  const label = sanitizeFileNameSegment(account.email || resolveExportAccountId(account) || account.id, `account_${index + 1}`);
+  const accountIdSuffix = sanitizeFileNameSegment(resolveExportAccountId(account), '');
+  const suffix = accountIdSuffix && accountIdSuffix !== label ? `_${accountIdSuffix.slice(-6)}` : '';
+  return `codex_cpa_accounts_${count}_${stamp}_${String(index + 1).padStart(2, '0')}_${label}${suffix}.json`;
+}
+
+function buildExportContent(accounts, format) {
+  if (format === 'gateway') {
+    return {
+      schema: 'codex-api-gateway.accounts',
+      version: 1,
+      exported_at: new Date().toISOString(),
+      accounts,
+    };
+  }
+  if (format === 'cockpit-tools') return accounts;
+  if (format === 'sub2api') {
+    return {
+      exported_at: exportTimestampNoMillis(),
+      proxies: [],
+      accounts: accounts.map(toSub2apiAccount),
+      type: 'sub2api-data',
+      version: 1,
+    };
+  }
+  const cpaPayload = accounts.map(toCpaTokenStorage);
+  return cpaPayload.length === 1 ? cpaPayload[0] : cpaPayload;
+}
+
+function buildExportDocuments(accounts, format) {
+  if (format !== 'cpa' || accounts.length <= 1) return [];
+  return accounts.map((account, index) => ({
+    id: `${account.id || resolveExportAccountId(account) || 'cpa_account'}_${index}`,
+    label: account.email || resolveExportAccountId(account) || account.account_name || account.id || `account_${index + 1}`,
+    filename: buildCpaDocumentFileName(account, index, accounts.length),
+    content: toCpaTokenStorage(account),
+  }));
 }
 
 function summarizeQuota(quota) {
@@ -648,6 +861,22 @@ export async function exportAccounts(accountIds = []) {
     : store.accounts;
   if (!selected.length) throw new Error('没有找到可导出的账号');
   return selected.map(accountExportObject);
+}
+
+export async function exportAccountsFormatted(accountIds = [], format = 'gateway') {
+  const normalizedFormat = normalizeExportFormat(format);
+  const accounts = await exportAccounts(accountIds);
+  assertOAuthExportable(accounts, normalizedFormat);
+  return {
+    ok: true,
+    format: normalizedFormat,
+    count: accounts.length,
+    filename: exportFileName(accounts.length, normalizedFormat),
+    content: buildExportContent(accounts, normalizedFormat),
+    documents: buildExportDocuments(accounts, normalizedFormat),
+    // 保留原始 Cockpit Tools 兼容数组，兼容旧版调用方。
+    accounts,
+  };
 }
 
 export async function listAccounts() {

@@ -2,7 +2,7 @@ import http from 'node:http';
 import { ACCOUNT_PATH, CORS_ALLOW_HEADERS, DEFAULT_CODEX_ORIGINATOR, DEFAULT_CODEX_USER_AGENT, DEFAULT_MODELS, UPSTREAM_BASE } from './constants.js';
 import {
   deleteAccount,
-  exportAccounts,
+  exportAccountsFormatted,
   importFromCodexAuth,
   importFromJsonContent,
   importFromOAuthTokens,
@@ -516,11 +516,12 @@ async function handleImportJson(req, res) {
 async function handleExportAccounts(req, res) {
   const body = await readBody(req);
   const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
-  const accounts = await exportAccounts(payload.accountIds || payload.ids || []);
+  const result = await exportAccountsFormatted(
+    payload.accountIds || payload.ids || [],
+    payload.format || payload.exportFormat || 'gateway'
+  );
   return jsonResponse(res, 200, {
-    ok: true,
-    count: accounts.length,
-    accounts,
+    ...result,
   });
 }
 
