@@ -2895,6 +2895,8 @@ const state = {
   lastWakeupResult: null,
   wakeupHistory: [],
   statePollTimer: null,
+  runtimePollTimer: null,
+  runtimePollBusy: false,
   loadingState: false,
   statsRange: 'daily',
   addTab: 'oauth',
@@ -3437,6 +3439,22 @@ function renderLocalAccessRuntime() {
   box.classList.remove('show');
 }
 
+function applyApiRuntimeState(runtime) {
+  runtime = runtime || {};
+  const activeId = runtime.currentAccount && runtime.currentAccount.id;
+  document.querySelectorAll('.acct-card[data-account-id]').forEach(function(card) {
+    const isUsing = !!activeId && card.dataset.accountId === activeId;
+    card.classList.toggle('api-using', isUsing);
+    const existing = card.querySelector('[data-runtime-api-using]');
+    if (isUsing && !existing) {
+      const badges = card.querySelector('.badges');
+      if (badges) badges.insertAdjacentHTML('afterbegin', '<span class="current-tag" data-runtime-api-using>API使用中</span>');
+    } else if (!isUsing && existing) {
+      existing.remove();
+    }
+  });
+}
+
 function renderApiPoolAccounts() {
   const box = $('apiPoolModalList');
   if (!box || !state.data) return;
@@ -3700,10 +3718,10 @@ function renderAccounts() {
     const selected = state.selectedWakeupIds.has(account.id);
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
-    return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '">' +
+    return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (apiUsing ? '<span class="current-tag">API使用中</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>API使用中</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="account-meta">' +
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
@@ -4050,6 +4068,37 @@ function scheduleStateAutoPoll(delayOverride) {
   }, delay);
 }
 
+function scheduleRuntimePoll(delayOverride) {
+  if (state.runtimePollTimer) {
+    clearTimeout(state.runtimePollTimer);
+    state.runtimePollTimer = null;
+  }
+  if (!state.data || !isApiServiceActive()) return;
+  const delay = delayOverride == null ? 900 : Number(delayOverride);
+  state.runtimePollTimer = setTimeout(refreshRuntimeState, Math.max(450, Math.min(delay, 5000)));
+}
+
+async function refreshRuntimeState() {
+  state.runtimePollTimer = null;
+  if (!state.data || !isApiServiceActive()) return;
+  if (state.runtimePollBusy) return scheduleRuntimePoll(900);
+  state.runtimePollBusy = true;
+  try {
+    const res = await fetch('/_admin/local-access/runtime?_=' + Date.now(), { cache: 'no-store' });
+    if (!res.ok) throw new Error('runtime poll failed: ' + res.status);
+    const runtime = await res.json();
+    if (state.data) state.data.localAccessRuntime = runtime;
+    renderLocalAccessRuntime();
+    applyApiRuntimeState(runtime);
+    scheduleRuntimePoll(Number(runtime.activeCount || 0) > 0 ? 550 : 900);
+  } catch (err) {
+    console.warn('[admin] runtime poll failed:', err);
+    scheduleRuntimePoll(3000);
+  } finally {
+    state.runtimePollBusy = false;
+  }
+}
+
 async function loadState() {
   if (state.loadingState) return;
   state.loadingState = true;
@@ -4081,6 +4130,7 @@ async function loadState() {
   renderLocalAccessMembers();
   renderLocalAccessRuntime();
   renderAccounts();
+  applyApiRuntimeState(state.data.localAccessRuntime || {});
   renderApiPoolAccounts();
   renderApiStatsPanel();
   renderQuotaAutoRefresh();
@@ -4092,6 +4142,7 @@ async function loadState() {
   syncSelectionControls();
   syncApiSelectionControls();
   scheduleStateAutoPoll();
+  scheduleRuntimePoll();
   } finally {
     state.loadingState = false;
   }

@@ -815,6 +815,10 @@ async function handleClearLocalAccessStats(req, res) {
   return jsonResponse(res, 200, { ok: true, stats: await clearLocalAccessStats() });
 }
 
+async function handleLocalAccessRuntime(req, res) {
+  return jsonResponse(res, 200, getLocalAccessRuntimeState());
+}
+
 async function handleLocalAccess(req, res) {
   if (req.method === 'GET') return jsonResponse(res, 200, await loadLocalAccessConfig());
   const body = await readBody(req);
@@ -966,6 +970,7 @@ export function createServer(config) {
       if (req.method === 'GET' && u.pathname === '/_admin/token-keeper') return await handleTokenKeeperState(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/token-keeper/run-now') return await handleTokenKeeperRunNow(req, res);
       if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/_admin/local-access') return await handleLocalAccess(req, res);
+      if (req.method === 'GET' && u.pathname === '/_admin/local-access/runtime') return await handleLocalAccessRuntime(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/local-access/stats') return await handleLocalAccessStats(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear') return await handleClearLocalAccessStats(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/codex-app/state') return await handleCodexAppState(req, res);
