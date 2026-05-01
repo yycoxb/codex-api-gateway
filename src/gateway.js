@@ -66,6 +66,50 @@ function runtimeAccountSummary(account) {
   };
 }
 
+function safeDiagnosticValue(value) {
+  if (value === undefined || value === null) return null;
+  if (['string', 'number', 'boolean'].includes(typeof value)) return value;
+  return Array.isArray(value) ? `[array:${value.length}]` : '[object]';
+}
+
+function collectSafeDiagnosticFields(value, prefix = '', output = {}) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return output;
+  for (const [key, item] of Object.entries(value)) {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const lower = path.toLowerCase();
+    if (/(message|messages|input|prompt|content|instruction|instructions|tool|tools)/i.test(path)) continue;
+    if (/(model|speed|tier|effort|reasoning|priority)/i.test(path)) {
+      output[path] = safeDiagnosticValue(item);
+    }
+    if (item && typeof item === 'object' && !Array.isArray(item)) {
+      collectSafeDiagnosticFields(item, path, output);
+    }
+    if (Object.keys(output).length >= 24) break;
+    if (!lower) continue;
+  }
+  return output;
+}
+
+function safeHeaderDiagnostics(req) {
+  const output = {};
+  const headers = req?.headers || {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (!/(speed|tier|model|effort|reasoning|priority|beta)/i.test(key)) continue;
+    output[key] = Array.isArray(value) ? value.join(', ') : String(value || '');
+  }
+  return output;
+}
+
+function safeRequestDiagnostics(req, body, target) {
+  const parsed = parseRequestJson(body) || {};
+  return {
+    method: req.method,
+    path: target || upstreamPath(req.url) || req.url,
+    body: collectSafeDiagnosticFields(parsed),
+    headers: safeHeaderDiagnostics(req),
+  };
+}
+
 function beginLocalAccessRequest(account, startedAt = Date.now(), meta = {}) {
   if (!account?.id) return null;
   const requestId = `${Date.now()}_${++localAccessRequestSequence}`;
@@ -74,6 +118,7 @@ function beginLocalAccessRequest(account, startedAt = Date.now(), meta = {}) {
     account: runtimeAccountSummary(account),
     target: meta.target || null,
     model: meta.model || null,
+    request: meta.request || null,
     startedAt,
     updatedAt: Date.now(),
   };
@@ -99,8 +144,10 @@ function getLocalAccessRuntimeState() {
     activeCount: activeRequests.length,
     currentAccount: current?.account || null,
     currentStartedAt: current?.startedAt || null,
+    currentRequest: current?.request || null,
     activeRequests,
     lastAccount: lastLocalAccessRequest?.account || null,
+    lastRequest: lastLocalAccessRequest?.request || null,
     lastStartedAt: lastLocalAccessRequest?.startedAt || null,
     lastFinishedAt: lastLocalAccessRequest?.finishedAt || null,
     lastSuccess: lastLocalAccessRequest?.success ?? null,
@@ -441,10 +488,12 @@ async function proxyCodexRequest(req, res, body) {
     // downstream stream semantics separate.
     const downstreamStreamMode = chatMode ? chatContext.stream : isStreamRequest(req, body);
     const upstreamStreamMode = chatMode ? true : downstreamStreamMode;
+    const requestDiagnostics = safeRequestDiagnostics(req, body, target);
     ({ upstream, account } = await sendWithAccountPool({ req, body, target, streamMode: upstreamStreamMode }));
     finishLocalAccessRequest = beginLocalAccessRequest(account, startedAt, {
       target,
       model: requestRoutingHint(body).modelKey,
+      request: requestDiagnostics,
     });
 
     const contentType = downstreamStreamMode

@@ -3258,6 +3258,22 @@ function renderLocalAccessMembers() {
   }).join('') + (accounts.length > 4 ? '<div class="api-pool-hint">还有 ' + (accounts.length - 4) + ' 个账号，点击“添加账号”查看全部。</div>' : '');
 }
 
+function requestDiagnosticsHtml(request) {
+  if (!request) return '';
+  const body = request.body || {};
+  const headers = request.headers || {};
+  const parts = [];
+  Object.keys(body).slice(0, 10).forEach(function(key) {
+    parts.push(key + '=' + String(body[key]));
+  });
+  Object.keys(headers).slice(0, 6).forEach(function(key) {
+    parts.push('header.' + key + '=' + String(headers[key]));
+  });
+  return '<div class="api-pool-hint">' + (parts.length
+    ? '请求诊断：' + escapeHtml(parts.join(' · '))
+    : '请求诊断：未发现 model/speed/tier/effort 相关字段') + '</div>';
+}
+
 function renderLocalAccessRuntime() {
   const box = $('localAccessRuntime');
   if (!box || !state.data) return;
@@ -3269,13 +3285,13 @@ function renderLocalAccessRuntime() {
   if (activeAccount) {
     const started = Number(runtime.currentStartedAt || 0);
     const runningText = started ? (' · 已运行 ' + durationText(Date.now() - started)) : '';
-    box.innerHTML = 'API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '');
+    box.innerHTML = 'API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + requestDiagnosticsHtml(runtime.currentRequest);
     box.classList.add('show');
     return;
   }
   if (lastAccount) {
     const finished = runtime.lastFinishedAt ? formatShortDate(runtime.lastFinishedAt) : '-';
-    box.innerHTML = '最近 API 使用：<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b> · ' + escapeHtml(finished);
+    box.innerHTML = '最近 API 使用：<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b> · ' + escapeHtml(finished) + requestDiagnosticsHtml(runtime.lastRequest);
     box.classList.add('show');
     return;
   }
