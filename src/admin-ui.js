@@ -120,14 +120,14 @@ export function renderAdminHtml() {
     }
 
     .overview-toolbar {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 14px;
+      display: grid;
+      grid-template-columns: minmax(460px, 1fr) minmax(480px, auto);
+      align-items: stretch;
+      gap: 12px;
       margin-bottom: 20px;
-      padding: 12px 16px;
+      padding: 10px;
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 18px;
       background: rgba(255, 255, 255, .72);
       box-shadow: var(--shadow-sm);
       backdrop-filter: blur(14px);
@@ -138,6 +138,45 @@ export function renderAdminHtml() {
       display: inline-flex;
       align-items: center;
       gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+      padding: 8px;
+      border: 1px solid var(--border-light);
+      border-radius: 14px;
+      background: rgba(255, 255, 255, .035);
+    }
+
+    .toolbar-left {
+      justify-content: flex-start;
+    }
+
+    .toolbar-right {
+      display: grid;
+      grid-template-columns: minmax(220px, auto) auto;
+      grid-template-areas:
+        "controls actions"
+        "status status";
+      justify-content: end;
+      align-items: center;
+      gap: 8px 10px;
+    }
+
+    .quota-controls {
+      grid-area: controls;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
+
+    .quota-actions {
+      grid-area: actions;
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
       flex-wrap: wrap;
     }
 
@@ -191,9 +230,28 @@ export function renderAdminHtml() {
     }
 
     .quota-auto-status {
+      grid-area: status;
+      justify-self: end;
+      display: inline-flex;
+      justify-content: flex-end;
+      gap: 6px 10px;
+      flex-wrap: wrap;
+      max-width: 100%;
       color: var(--text-muted);
       font-size: 12px;
       font-weight: 800;
+      line-height: 1.45;
+    }
+
+    .quota-auto-status span {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 8px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, .045);
+      white-space: nowrap;
     }
 
     .top-panel {
@@ -2388,6 +2446,21 @@ export function renderAdminHtml() {
       color: var(--text-primary);
     }
 
+    @media (max-width: 1280px) {
+      .overview-toolbar {
+        grid-template-columns: 1fr;
+      }
+
+      .toolbar-right {
+        justify-content: stretch;
+      }
+
+      .quota-auto-status {
+        justify-self: start;
+        justify-content: flex-start;
+      }
+    }
+
     @media (max-width: 920px) {
       .wakeup-strip {
         grid-template-columns: 1fr;
@@ -2412,7 +2485,19 @@ export function renderAdminHtml() {
 
       .overview-toolbar {
         align-items: stretch;
-        flex-direction: column;
+      }
+
+      .toolbar-right {
+        grid-template-columns: 1fr;
+        grid-template-areas:
+          "controls"
+          "actions"
+          "status";
+      }
+
+      .quota-controls,
+      .quota-actions {
+        justify-content: flex-start;
       }
 
       .daily-schedule-row {
@@ -2467,10 +2552,14 @@ export function renderAdminHtml() {
           <button id="overviewOpenWakeupBtn">${icons.play} 打开唤醒任务</button>
         </div>
         <div class="toolbar-right">
-          <label class="quota-auto-refresh"><input type="checkbox" id="quotaAutoRefreshEnabled" /> &#33258;&#21160;&#21047;&#26032;&#39069;&#24230;</label>
-          <span class="quota-auto-refresh">&#27599; <input type="number" min="1" id="quotaAutoRefreshInterval" value="10" /> &#20998;&#38047;</span>
-          <button id="saveQuotaAutoRefreshBtn">&#20445;&#23384;&#33258;&#21160;&#21047;&#26032;</button>
-          <button id="runQuotaAutoRefreshNowBtn">&#31435;&#21363;&#21047;&#26032;&#20840;&#37096;</button>
+          <div class="quota-controls">
+            <label class="quota-auto-refresh"><input type="checkbox" id="quotaAutoRefreshEnabled" /> 自动刷新</label>
+            <span class="quota-auto-refresh">每 <input type="number" min="1" id="quotaAutoRefreshInterval" value="10" /> 分钟</span>
+          </div>
+          <div class="quota-actions">
+            <button id="saveQuotaAutoRefreshBtn">保存</button>
+            <button id="runQuotaAutoRefreshNowBtn">立即刷新全部</button>
+          </div>
           <span class="quota-auto-status" id="quotaAutoRefreshStatus">&#26410;&#21551;&#29992;</span>
         </div>
       </div>
@@ -3794,9 +3883,9 @@ function renderQuotaAutoRefresh() {
   const lastText = schedule.lastRunAt ? formatShortDate(schedule.lastRunAt) : '-';
   const resultText = last ? ((last.ok ? '\u6210\u529f ' : '\u5931\u8d25 ') + (last.successCount || 0) + '/' + (last.count || 0)) : '-';
   if (schedule.enabled) {
-    status.innerHTML = '\u5df2\u542f\u7528\uff1a\u6bcf ' + escapeHtml(schedule.intervalMinutes || 10) + ' \u5206\u949f \u00b7 \u4e0b\u6b21 ' + escapeHtml(nextText) + ' \u00b7 \u4e0a\u6b21 ' + escapeHtml(resultText) + (schedule.running ? ' \u00b7 \u6b63\u5728\u5237\u65b0...' : '');
+    status.innerHTML = '<span>已启用</span><span>每 ' + escapeHtml(schedule.intervalMinutes || 10) + ' 分钟</span><span>下次 ' + escapeHtml(nextText) + '</span><span>上次 ' + escapeHtml(resultText) + '</span>' + (schedule.running ? '<span>正在刷新...</span>' : '');
   } else {
-    status.innerHTML = '\u672a\u542f\u7528' + (last ? ' \u00b7 \u4e0a\u6b21 ' + escapeHtml(lastText) + ' ' + escapeHtml(resultText) : '');
+    status.innerHTML = '<span>未启用</span>' + (last ? '<span>上次 ' + escapeHtml(lastText) + '</span><span>' + escapeHtml(resultText) + '</span>' : '');
   }
 }
 
