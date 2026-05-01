@@ -436,6 +436,27 @@ export function renderAdminHtml() {
       45% { opacity: 1; transform: scale(1.22); }
     }
 
+    @keyframes api-card-flow {
+      0% { transform: translateX(-130%) skewX(-18deg); opacity: 0; }
+      18% { opacity: .78; }
+      50% { opacity: .42; }
+      100% { transform: translateX(130%) skewX(-18deg); opacity: 0; }
+    }
+
+    @keyframes api-card-pulse {
+      0%, 100% {
+        box-shadow:
+          0 0 0 1px rgba(110, 231, 183, .18),
+          0 18px 44px rgba(0, 0, 0, .42);
+      }
+      50% {
+        box-shadow:
+          0 0 0 1px rgba(110, 231, 183, .36),
+          0 0 28px rgba(110, 231, 183, .16),
+          0 22px 58px rgba(0, 0, 0, .48);
+      }
+    }
+
     .strip-icon .icon-svg,
     .card-icon .icon-svg {
       width: 24px;
@@ -2109,6 +2130,41 @@ export function renderAdminHtml() {
         0 22px 58px rgba(0, 0, 0, .48);
     }
 
+    .ghcp-account-card.api-using {
+      border-color: rgba(110, 231, 183, .56);
+      background:
+        radial-gradient(circle at 100% 0%, rgba(110, 231, 183, .16), transparent 38%),
+        linear-gradient(180deg, rgba(24, 31, 21, .94), rgba(12, 14, 9, .92));
+      animation: api-card-pulse 2.8s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.api-using::after {
+      content: '';
+      position: absolute;
+      z-index: 0;
+      top: -20%;
+      bottom: -20%;
+      left: -45%;
+      width: 42%;
+      background:
+        linear-gradient(90deg, transparent, rgba(110, 231, 183, .10), rgba(245, 208, 111, .18), transparent);
+      filter: blur(1px);
+      pointer-events: none;
+      animation: api-card-flow 3.2s linear infinite;
+    }
+
+    .ghcp-account-card.api-using > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .ghcp-account-card.api-using .current-tag:first-child {
+      color: #102318;
+      border-color: rgba(110, 231, 183, .48);
+      background: linear-gradient(135deg, #b7ffe0, #6ee7b7);
+      box-shadow: 0 0 18px rgba(110, 231, 183, .18);
+    }
+
     .ghcp-account-card.selected:not(.current),
     .wakeup-account-row.selected,
     .api-pool-row.selected,
@@ -2380,6 +2436,13 @@ export function renderAdminHtml() {
       .stats-grid,
       .stats-config-grid { grid-template-columns: 1fr; }
       .stats-account-row { grid-template-columns: 1fr; align-items: stretch; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      .ghcp-account-card.api-using,
+      .ghcp-account-card.api-using::after {
+        animation: none;
+      }
     }
   </style>
 </head>
@@ -3637,7 +3700,7 @@ function renderAccounts() {
     const selected = state.selectedWakeupIds.has(account.id);
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
-    return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + '">' +
+    return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '">' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
         '<div class="badges">' + (apiUsing ? '<span class="current-tag">API使用中</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
