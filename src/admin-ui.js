@@ -17,6 +17,8 @@ export function renderAdminHtml() {
     key: svg('<circle cx="7.5" cy="15.5" r="4.5"></circle><path d="M11 12l9-9"></path><path d="M15 6l3 3"></path>'),
     diamond: svg('<path d="M12 3l9 9-9 9-9-9 9-9z"></path>'),
     upload: svg('<path d="M12 3v12"></path><path d="M7 8l5-5 5 5"></path><path d="M5 21h14"></path>'),
+    chevronUp: svg('<path d="M6 15l6-6 6 6"></path>'),
+    chevronDown: svg('<path d="M6 9l6 6 6-6"></path>'),
     trash: svg('<path d="M3 6h18"></path><path d="M8 6V4h8v2"></path><path d="M19 6l-1 14H6L5 6"></path>')
   };
   return `<!doctype html>
@@ -3848,8 +3850,8 @@ function renderAccounts() {
           '<button class="icon-btn" data-switch-codex-app="' + escapeHtml(account.id) + '" title="登录到 Codex App">${icons.server}</button>' +
           '<button class="icon-btn" data-refresh-quota="' + escapeHtml(account.id) + '" title="刷新用量">${icons.refresh}</button>' +
           '<button class="icon-btn" data-export-account="' + escapeHtml(account.id) + '" title="导出账号 JSON">${icons.upload}</button>' +
-          '<button class="icon-btn" data-move-account="up" data-account-id="' + escapeHtml(account.id) + '" title="上移账号">↑</button>' +
-          '<button class="icon-btn" data-move-account="down" data-account-id="' + escapeHtml(account.id) + '" title="下移账号">↓</button>' +
+          '<button class="icon-btn" data-move-account="up" data-account-id="' + escapeHtml(account.id) + '" title="上移账号" aria-label="上移账号">' + icons.chevronUp + '</button>' +
+          '<button class="icon-btn" data-move-account="down" data-account-id="' + escapeHtml(account.id) + '" title="下移账号" aria-label="下移账号">' + icons.chevronDown + '</button>' +
           '<button class="icon-btn" data-delete-account="' + escapeHtml(account.id) + '" title="删除账号">${icons.trash}</button>' +
         '</div>' +
       '</div>' +
