@@ -110,6 +110,27 @@ function safeRequestDiagnostics(req, body, target) {
   };
 }
 
+function stripPriorityServiceTier(body) {
+  const raw = Buffer.isBuffer(body) ? body.toString('utf8') : String(body || '');
+  if (!raw.trim()) return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
+  }
+  const tier = String(parsed.service_tier || '').trim().toLowerCase();
+  if (tier !== 'priority') return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
+  delete parsed.service_tier;
+  return {
+    body: Buffer.from(JSON.stringify(parsed)),
+    rewrite: { 'gateway.service_tier_rewrite': 'priority->removed' },
+  };
+}
+
 function beginLocalAccessRequest(account, startedAt = Date.now(), meta = {}) {
   if (!account?.id) return null;
   const requestId = `${Date.now()}_${++localAccessRequestSequence}`;
@@ -488,7 +509,10 @@ async function proxyCodexRequest(req, res, body) {
     // downstream stream semantics separate.
     const downstreamStreamMode = chatMode ? chatContext.stream : isStreamRequest(req, body);
     const upstreamStreamMode = chatMode ? true : downstreamStreamMode;
+    const serviceTierRewrite = stripPriorityServiceTier(body);
+    body = serviceTierRewrite.body;
     const requestDiagnostics = safeRequestDiagnostics(req, body, target);
+    if (serviceTierRewrite.rewrite) Object.assign(requestDiagnostics.body, serviceTierRewrite.rewrite);
     ({ upstream, account } = await sendWithAccountPool({ req, body, target, streamMode: upstreamStreamMode }));
     finishLocalAccessRequest = beginLocalAccessRequest(account, startedAt, {
       target,
