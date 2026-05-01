@@ -483,6 +483,8 @@ export function renderAdminHtml() {
     }
 
     .codex-local-access-card {
+      height: auto;
+      min-height: var(--overview-card-height, 452px);
       background: linear-gradient(135deg, #f5fbff 0%, #eef7ff 45%, #edfdf8 100%);
       border: 1.5px solid rgba(14, 165, 233, .18);
     }
