@@ -2430,25 +2430,12 @@ export function renderAdminHtml() {
 
           <div class="config-list">
             <div class="config-row">
-              <div class="label">地址</div>
-              <div class="code" id="baseUrl">加载中...</div>
-              <button class="icon-btn" data-copy="baseUrl" title="复制地址">${icons.copy}</button>
-              <span class="copy-extra"></span>
-            </div>
-            <div class="config-row">
-              <div class="label">密钥</div>
-              <div class="code" id="apiKeyMasked">加载中...</div>
-              <button class="icon-btn" id="toggleKeyBtn" title="显示/隐藏密钥">${icons.eye}</button>
-              <button class="icon-btn copy-extra" data-copy-secret="apiKey" title="复制密钥">${icons.copy}</button>
-            </div>
-            <div class="config-row">
               <div class="label">速度</div>
               <select class="input" id="apiSpeedMode">
                 <option value="normal">标准</option>
                 <option value="fast">快速</option>
                 <option value="passthrough">跟随客户端</option>
               </select>
-              <span class="copy-extra"></span>
             </div>
           </div>
 
@@ -4013,8 +4000,8 @@ async function loadState() {
   state.apiSelectionInitialized = true;
   normalizeAccountOrder();
   state.selectionInitialized = true;
-  $('baseUrl').textContent = state.data.baseUrl;
-  $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
+  if ($('baseUrl')) $('baseUrl').textContent = state.data.baseUrl;
+  if ($('apiKeyMasked')) $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('apiSpeedMode')) $('apiSpeedMode').value = (state.data.localAccess && state.data.localAccess.serviceTierMode) || 'normal';
   if ($('localAccessStatus')) {
     const local = state.data.localAccess || {};
@@ -4558,9 +4545,9 @@ $('apiPoolModalCloseBtn').onclick = closeApiPoolModal;
 $('apiPoolCancelBtn').onclick = closeApiPoolModal;
 $('apiPoolModal').onclick = function(event) { if (event.target === $('apiPoolModal')) closeApiPoolModal(); };
 $('apiPoolSearch').oninput = function(event) { state.apiPoolQuery = event.target.value; renderApiPoolAccounts(); };
-$('toggleKeyBtn').onclick = function() {
+if ($('toggleKeyBtn')) $('toggleKeyBtn').onclick = function() {
   state.showKey = !state.showKey;
-  $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
+  if ($('apiKeyMasked')) $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('statsApiKey')) $('statsApiKey').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
 };
 $('copyChatBtn').onclick = function() { copyText(state.data.baseUrl + '/chat/completions'); };
