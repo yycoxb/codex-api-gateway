@@ -3551,6 +3551,8 @@ function renderWakeupAccounts() {
   const box = $('wakeupAccountList');
   if (!box || !state.data) return;
   const accounts = sortedAccounts();
+  const apiServiceActive = isApiServiceActive();
+  const localAccessIds = new Set((state.data.localAccess && state.data.localAccess.accountIds) || []);
   if (!accounts.length) {
     box.innerHTML = '<div class="empty-state">暂无账号，请先在账号总览里添加。</div>';
     renderWakeupStats();
@@ -3558,7 +3560,12 @@ function renderWakeupAccounts() {
   }
   box.innerHTML = accounts.map(function(account) {
     const selected = state.selectedWakeupIds.has(account.id);
-    const current = account.id === state.data.currentAccountId;
+    const current = !apiServiceActive && account.id === state.data.currentAccountId;
+    const apiMember = apiServiceActive && localAccessIds.has(account.id);
+    const gatewayDefault = apiServiceActive && account.id === state.data.currentAccountId;
+    const badges = (current ? '<span class="current-tag">当前</span>' : '') +
+      (apiMember ? '<span class="member-tag">API成员</span>' : '') +
+      (gatewayDefault ? '<span class="default-tag" title="API 服务模式下不是正在调用的账号，只是单账号模式/手动切换的默认值">单账号默认</span>' : '');
     const plan = planLabel(account.planType);
     const quota = account.quota || {};
     const hourly = quota.hourly_percentage == null ? '-' : quota.hourly_percentage + '%';
@@ -3566,7 +3573,7 @@ function renderWakeupAccounts() {
     return '<label class="wakeup-account-row ' + (selected ? 'selected ' : '') + '">' +
       '<input type="checkbox" class="wakeup-task-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '>' +
       '<div class="wakeup-account-main">' +
-        '<div class="wakeup-account-title"><span>' + escapeHtml(maskEmail(account.email)) + '</span><span class="badges">' + (current ? '<span class="current-tag">当前</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></span></div>' +
+        '<div class="wakeup-account-title"><span>' + escapeHtml(maskEmail(account.email)) + '</span><span class="badges">' + badges + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></span></div>' +
         '<div class="wakeup-account-meta">5h ' + escapeHtml(hourly) + ' · Weekly ' + escapeHtml(weekly) + ' · ' + escapeHtml(loginLabel(account)) + '</div>' +
       '</div>' +
     '</label>';
