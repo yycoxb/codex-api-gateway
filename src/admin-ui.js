@@ -2752,6 +2752,7 @@ export function renderAdminHtml() {
   </div>
 
 <script>
+const ACCOUNT_ORDER_STORAGE_KEY = 'codex-api-gateway.account-order.v1';
 const state = {
   data: null,
   showKey: false,
@@ -2776,7 +2777,8 @@ const state = {
   oauthCompleting: false,
   importFormat: 'auto',
   exportAccountIds: [],
-  exportFormat: 'gateway'
+  exportFormat: 'gateway',
+  accountOrder: loadAccountOrder()
 };
 const $ = (id) => document.getElementById(id);
 
@@ -2835,6 +2837,24 @@ function maskId(value) {
   value = String(value || '');
   if (!value) return '-';
   return maskMiddle(value, 3, 3);
+}
+
+function loadAccountOrder() {
+  try {
+    const raw = localStorage.getItem(ACCOUNT_ORDER_STORAGE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.map(function(id) { return String(id || '').trim(); }).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveAccountOrder() {
+  try {
+    localStorage.setItem(ACCOUNT_ORDER_STORAGE_KEY, JSON.stringify(state.accountOrder || []));
+  } catch {
+    // ignore storage failures
+  }
 }
 
 function exportFileName(count, format) {
@@ -3062,17 +3082,77 @@ function visualCurrentAccountId() {
   return appMatched || (state.data && state.data.currentAccountId) || null;
 }
 
+function accountPlanSortRank(account) {
+  const plan = planLabel(account && account.planType);
+  if (plan === 'FREE') return 20;
+  if (plan === 'PRO') return 1;
+  if (plan === 'PLUS') return 2;
+  if (plan === 'TEAM') return 3;
+  return 10;
+}
+
+function normalizeAccountOrder() {
+  const accounts = (state.data && state.data.accounts) || [];
+  const valid = new Set(accounts.map(function(account) { return account.id; }));
+  state.accountOrder = (state.accountOrder || []).filter(function(id) { return valid.has(id); });
+}
+
 function sortedAccounts() {
   const currentId = visualCurrentAccountId();
-  return ((state.data && state.data.accounts) || []).slice().sort(function(a, b) {
+  const accounts = ((state.data && state.data.accounts) || []).slice();
+  const originalIndex = new Map();
+  accounts.forEach(function(account, index) { originalIndex.set(account.id, index); });
+  const orderIndex = new Map();
+  (state.accountOrder || []).forEach(function(id, index) { orderIndex.set(id, index); });
+  const hasCustomOrder = orderIndex.size > 0;
+  const apiServiceActive = isApiServiceActive();
+  const apiIds = new Set((state.data && state.data.localAccess && state.data.localAccess.accountIds) || []);
+  return accounts.sort(function(a, b) {
+    if (hasCustomOrder) {
+      const ai = orderIndex.has(a.id) ? orderIndex.get(a.id) : Number.MAX_SAFE_INTEGER;
+      const bi = orderIndex.has(b.id) ? orderIndex.get(b.id) : Number.MAX_SAFE_INTEGER;
+      if (ai !== bi) return ai - bi;
+    }
     if (a.id === currentId) return -1;
     if (b.id === currentId) return 1;
-    return 0;
+    if (!hasCustomOrder && apiServiceActive) {
+      const am = apiIds.has(a.id) ? 0 : 1;
+      const bm = apiIds.has(b.id) ? 0 : 1;
+      if (am !== bm) return am - bm;
+    }
+    if (!hasCustomOrder) {
+      const ap = accountPlanSortRank(a);
+      const bp = accountPlanSortRank(b);
+      if (ap !== bp) return ap - bp;
+    }
+    return (originalIndex.get(a.id) || 0) - (originalIndex.get(b.id) || 0);
   });
 }
 
 function allAccountIds() {
   return sortedAccounts().map(function(account) { return account.id; });
+}
+
+function moveAccountOrder(accountId, direction) {
+  const ids = sortedAccounts().map(function(account) { return account.id; });
+  const index = ids.indexOf(accountId);
+  if (index < 0) return;
+  const delta = direction === 'down' ? 1 : -1;
+  const next = index + delta;
+  if (next < 0 || next >= ids.length) return;
+  const swap = ids[index];
+  ids[index] = ids[next];
+  ids[next] = swap;
+  state.accountOrder = ids;
+  saveAccountOrder();
+  renderLocalAccessMembers();
+  renderAccounts();
+  renderApiPoolAccounts();
+  renderWakeupAccounts();
+  renderCodexAppAccounts();
+  syncSelectionControls();
+  syncApiSelectionControls();
+  toast('账号顺序已更新');
 }
 
 function selectedAccountIds() {
@@ -3082,8 +3162,9 @@ function selectedAccountIds() {
 }
 
 function selectedApiAccountIds() {
-  return Array.from(state.apiAccountIds).filter(function(id) {
-    return allAccountIds().includes(id);
+  const selected = state.apiAccountIds || new Set();
+  return sortedAccounts().map(function(account) { return account.id; }).filter(function(id) {
+    return selected.has(id);
   });
 }
 
@@ -3408,6 +3489,8 @@ function renderAccounts() {
           '<button class="icon-btn" data-wakeup-account="' + escapeHtml(account.id) + '" title="唤醒此账号">${icons.play}</button>' +
           '<button class="icon-btn" data-refresh-quota="' + escapeHtml(account.id) + '" title="刷新用量">${icons.refresh}</button>' +
           '<button class="icon-btn" data-export-account="' + escapeHtml(account.id) + '" title="导出账号 JSON">${icons.upload}</button>' +
+          '<button class="icon-btn" data-move-account="up" data-account-id="' + escapeHtml(account.id) + '" title="上移账号">↑</button>' +
+          '<button class="icon-btn" data-move-account="down" data-account-id="' + escapeHtml(account.id) + '" title="下移账号">↓</button>' +
           '<button class="icon-btn" data-delete-account="' + escapeHtml(account.id) + '" title="删除账号">${icons.trash}</button>' +
         '</div>' +
       '</div>' +
@@ -3746,12 +3829,8 @@ async function loadState() {
   state.apiRestrictFreeAccounts = !(state.data.localAccess && state.data.localAccess.restrictFreeAccounts === false);
   if (!state.apiModalOpen) state.apiModalIds = new Set(localAccessIds);
   state.apiSelectionInitialized = true;
-  if (!state.selectionInitialized) {
-    const scheduledIds = (state.data.wakeupSchedule && state.data.wakeupSchedule.accountIds) || [];
-    if (scheduledIds.length) scheduledIds.forEach(function(id) { state.selectedWakeupIds.add(id); });
-    else if (!isApiServiceActive() && state.data.currentAccountId) state.selectedWakeupIds.add(state.data.currentAccountId);
-    state.selectionInitialized = true;
-  }
+  normalizeAccountOrder();
+  state.selectionInitialized = true;
   $('baseUrl').textContent = state.data.baseUrl;
   $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('localAccessStatus')) {
@@ -4229,6 +4308,9 @@ document.addEventListener('click', function(event) {
   if (refreshId) refreshQuota([refreshId]);
   const exportId = target && target.dataset && target.dataset.exportAccount;
   if (exportId) exportAccountsJson([exportId]);
+  const moveDirection = target && target.dataset && target.dataset.moveAccount;
+  const moveAccountId = target && target.dataset && target.dataset.accountId;
+  if (moveDirection && moveAccountId) moveAccountOrder(moveAccountId, moveDirection);
   const deleteId = target && target.dataset && target.dataset.deleteAccount;
   if (deleteId) deleteAccount(deleteId);
   const statsRange = target && target.dataset && target.dataset.statsRange;
