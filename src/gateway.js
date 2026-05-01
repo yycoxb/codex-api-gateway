@@ -48,9 +48,63 @@ const UPSTREAM_SEND_RETRY_BASE_DELAY_MS = 200;
 
 const responseAffinity = new Map();
 const modelCooldowns = new Map();
+const activeLocalAccessRequests = new Map();
+let localAccessRequestSequence = 0;
+let lastLocalAccessRequest = null;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function runtimeAccountSummary(account) {
+  if (!account) return null;
+  return {
+    id: account.id,
+    email: account.email,
+    accountId: account.accountId || account.account_id || null,
+    planType: account.planType || account.plan_type || null,
+  };
+}
+
+function beginLocalAccessRequest(account, startedAt = Date.now(), meta = {}) {
+  if (!account?.id) return null;
+  const requestId = `${Date.now()}_${++localAccessRequestSequence}`;
+  const entry = {
+    requestId,
+    account: runtimeAccountSummary(account),
+    target: meta.target || null,
+    model: meta.model || null,
+    startedAt,
+    updatedAt: Date.now(),
+  };
+  activeLocalAccessRequests.set(requestId, entry);
+  lastLocalAccessRequest = { ...entry };
+  return (success = null) => {
+    const current = activeLocalAccessRequests.get(requestId) || entry;
+    activeLocalAccessRequests.delete(requestId);
+    lastLocalAccessRequest = {
+      ...current,
+      success,
+      finishedAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+  };
+}
+
+function getLocalAccessRuntimeState() {
+  const activeRequests = Array.from(activeLocalAccessRequests.values())
+    .sort((a, b) => Number(b.startedAt || 0) - Number(a.startedAt || 0));
+  const current = activeRequests[0] || null;
+  return {
+    activeCount: activeRequests.length,
+    currentAccount: current?.account || null,
+    currentStartedAt: current?.startedAt || null,
+    activeRequests,
+    lastAccount: lastLocalAccessRequest?.account || null,
+    lastStartedAt: lastLocalAccessRequest?.startedAt || null,
+    lastFinishedAt: lastLocalAccessRequest?.finishedAt || null,
+    lastSuccess: lastLocalAccessRequest?.success ?? null,
+  };
 }
 
 function pruneRuntimeRoutingState() {
@@ -368,6 +422,7 @@ async function proxyCodexRequest(req, res, body) {
   let account = null;
   let upstream = null;
   let capture = null;
+  let finishLocalAccessRequest = null;
 
   try {
     if (chatMode) {
@@ -387,6 +442,10 @@ async function proxyCodexRequest(req, res, body) {
     const downstreamStreamMode = chatMode ? chatContext.stream : isStreamRequest(req, body);
     const upstreamStreamMode = chatMode ? true : downstreamStreamMode;
     ({ upstream, account } = await sendWithAccountPool({ req, body, target, streamMode: upstreamStreamMode }));
+    finishLocalAccessRequest = beginLocalAccessRequest(account, startedAt, {
+      target,
+      model: requestRoutingHint(body).modelKey,
+    });
 
     const contentType = downstreamStreamMode
       ? 'text/event-stream; charset=utf-8'
@@ -440,6 +499,8 @@ async function proxyCodexRequest(req, res, body) {
       usage: capture?.usage,
     }).catch(() => {});
     throw err;
+  } finally {
+    if (finishLocalAccessRequest) finishLocalAccessRequest(upstream ? Boolean(upstream.ok) : false);
   }
 }
 
@@ -466,6 +527,7 @@ async function handleAdmin(req, res, config) {
     models: DEFAULT_MODELS,
     codexApp: await getCodexAppState(),
     localAccess: await loadLocalAccessConfig(),
+    localAccessRuntime: getLocalAccessRuntimeState(),
     localAccessStats: await loadLocalAccessStats(),
     wakeupSchedule: await loadWakeupSchedule(),
     quotaAutoRefresh: await loadQuotaRefreshSchedule(),

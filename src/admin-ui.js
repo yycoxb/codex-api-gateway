@@ -1060,6 +1060,32 @@ export function renderAdminHtml() {
       margin-top: 4px;
     }
 
+    .local-access-runtime {
+      display: none;
+      padding: 10px 12px;
+      border: 1px solid rgba(245, 208, 111, .20);
+      border-radius: var(--radius-md);
+      background: rgba(212, 175, 55, .08);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1.5;
+    }
+
+    .local-access-runtime.show {
+      display: block;
+    }
+
+    .local-access-runtime.live {
+      border-color: rgba(110, 231, 183, .30);
+      background: rgba(34, 197, 94, .08);
+      color: #9ff0cf;
+    }
+
+    .local-access-runtime b {
+      color: var(--text-primary);
+    }
+
     .local-access-member-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -2377,6 +2403,7 @@ export function renderAdminHtml() {
           </div>
 
           <div class="local-note" id="localAccessHint">点击“添加账号”维护 API 服务集合；播放按钮才会切到 API 服务模式。</div>
+          <div class="local-access-runtime" id="localAccessRuntime"></div>
           <div class="local-access-members" id="localAccessMembers"></div>
           <button class="add-btn" id="addAccountBtn">${icons.folderPlus} 添加账号</button>
 
@@ -3229,6 +3256,31 @@ function renderLocalAccessMembers() {
   }).join('') + (accounts.length > 4 ? '<div class="api-pool-hint">还有 ' + (accounts.length - 4) + ' 个账号，点击“添加账号”查看全部。</div>' : '');
 }
 
+function renderLocalAccessRuntime() {
+  const box = $('localAccessRuntime');
+  if (!box || !state.data) return;
+  const runtime = state.data.localAccessRuntime || {};
+  const activeAccount = runtime.currentAccount || null;
+  const lastAccount = runtime.lastAccount || null;
+  const activeCount = Number(runtime.activeCount || 0);
+  box.classList.toggle('live', activeCount > 0);
+  if (activeAccount) {
+    const started = Number(runtime.currentStartedAt || 0);
+    const runningText = started ? (' · 已运行 ' + durationText(Date.now() - started)) : '';
+    box.innerHTML = 'API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '');
+    box.classList.add('show');
+    return;
+  }
+  if (lastAccount) {
+    const finished = runtime.lastFinishedAt ? formatShortDate(runtime.lastFinishedAt) : '-';
+    box.innerHTML = '最近 API 使用：<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b> · ' + escapeHtml(finished);
+    box.classList.add('show');
+    return;
+  }
+  box.textContent = '';
+  box.classList.remove('show');
+}
+
 function renderApiPoolAccounts() {
   const box = $('apiPoolModalList');
   if (!box || !state.data) return;
@@ -3464,17 +3516,20 @@ function renderAccounts() {
     updateSelectedCount();
     return;
   }
+  const runtime = state.data.localAccessRuntime || {};
+  const activeApiAccountId = runtime.currentAccount && runtime.currentAccount.id;
 
   list.innerHTML = accounts.map(function(account) {
     const current = account.id === currentId;
     const apiMember = apiServiceActive && localAccessIds.has(account.id);
+    const apiUsing = apiServiceActive && activeApiAccountId === account.id;
     const selected = state.selectedWakeupIds.has(account.id);
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
     return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + '">' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + (apiUsing ? '<span class="current-tag">API使用中</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="account-meta">' +
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
@@ -3793,11 +3848,15 @@ function scheduleStateAutoPoll(delayOverride) {
     state.statePollTimer = null;
   }
   const schedule = (state.data && state.data.quotaAutoRefresh) || {};
-  if (!schedule.enabled && delayOverride == null) return;
+  const apiServiceLive = isApiServiceActive();
+  const runtimeActive = Number(state.data && state.data.localAccessRuntime && state.data.localAccessRuntime.activeCount || 0) > 0;
+  if (!schedule.enabled && !apiServiceLive && delayOverride == null) return;
   const now = Date.now();
   let delay = Number(delayOverride || 0);
   if (!delay) {
-    if (schedule.running) {
+    if (runtimeActive) {
+      delay = 2000;
+    } else if (schedule.running) {
       delay = 5000;
     } else if (Number(schedule.nextRunAt || 0) > now) {
       delay = Number(schedule.nextRunAt) - now + 3000;
@@ -3810,7 +3869,7 @@ function scheduleStateAutoPoll(delayOverride) {
     state.statePollTimer = null;
     loadState({ silent: true }).catch(function(err) {
       console.warn('[admin] state auto poll failed:', err);
-      if (state.data && state.data.quotaAutoRefresh && state.data.quotaAutoRefresh.enabled) {
+      if ((state.data && state.data.quotaAutoRefresh && state.data.quotaAutoRefresh.enabled) || isApiServiceActive()) {
         scheduleStateAutoPoll(15000);
       }
     });
@@ -3845,6 +3904,7 @@ async function loadState() {
     $('localAccessHint').textContent = (active ? 'Codex App 已接入本地 API 服务。' : '点击“添加账号”维护 API 服务集合；播放按钮才会切到 API 服务模式。') + (ids.length ? ' 已保存集合：' + ids.length + ' 个。' : '');
   }
   renderLocalAccessMembers();
+  renderLocalAccessRuntime();
   renderAccounts();
   renderApiPoolAccounts();
   renderApiStatsPanel();
