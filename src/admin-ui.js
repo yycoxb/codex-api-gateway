@@ -1169,6 +1169,7 @@ export function renderAdminHtml() {
     }
 
     .export-format-help,
+    .import-format-help,
     .export-token-warning {
       padding: 12px 14px;
       border-radius: var(--radius-md);
@@ -2577,7 +2578,18 @@ export function renderAdminHtml() {
         </section>
 
         <section class="account-add-section" id="addSectionToken">
-          <p class="section-desc">粘贴另一个账号的 ~/.codex/auth.json、Cockpit 导出的单个账号 JSON，或账号数组。请不要粘贴无 refresh_token 的网页会话凭证作为长期账号。</p>
+          <p class="section-desc">粘贴另一个账号的 ~/.codex/auth.json、Gateway / Cockpit / sub2api / CPA 导出的账号 JSON。请不要粘贴无 refresh_token 的网页会话凭证作为长期账号。</p>
+          <div>
+            <label class="form-label" for="importFormatSelect">导入格式</label>
+            <select class="input" id="importFormatSelect">
+              <option value="auto">自动识别（推荐）</option>
+              <option value="gateway">gateway（本项目）</option>
+              <option value="cockpit-tools">cockpit-tools</option>
+              <option value="sub2api">sub2api</option>
+              <option value="cpa">cpa / token storage</option>
+            </select>
+          </div>
+          <div class="import-format-help" id="importFormatHelp">自动识别：按 JSON 结构判断 gateway、cockpit-tools、sub2api 或 cpa。</div>
           <textarea id="authJsonInput" class="import-textarea" placeholder="把账号 JSON 粘贴到这里"></textarea>
           <div class="inline-actions">
             <button class="primary" id="importJsonBtn">导入粘贴内容</button>
@@ -2762,10 +2774,19 @@ const state = {
   oauthUrl: '',
   oauthPollTimer: null,
   oauthCompleting: false,
+  importFormat: 'auto',
   exportAccountIds: [],
   exportFormat: 'gateway'
 };
 const $ = (id) => document.getElementById(id);
+
+const importFormatHelpText = {
+  auto: '自动识别：按 JSON 结构判断 gateway、cockpit-tools、sub2api 或 cpa。',
+  gateway: 'gateway：本项目原生迁移包，包含 accounts 字段。',
+  'cockpit-tools': 'cockpit-tools：Cockpit Tools 兼容的账号对象或账号数组。',
+  sub2api: 'sub2api：读取 accounts[].credentials 中的 OAuth tokens 与账号元数据。',
+  cpa: 'cpa：读取 CPA / Codex token storage 的根级 id_token、access_token、refresh_token。'
+};
 
 const exportFormatHelpText = {
   gateway: 'gateway：本项目原生迁移包，包含 accounts 字段，可再次导入本项目。',
@@ -4002,14 +4023,28 @@ async function importCurrent() {
   await loadState();
 }
 
+function selectedImportFormat() {
+  const select = $('importFormatSelect');
+  return select ? select.value : (state.importFormat || 'auto');
+}
+
+function syncImportFormatHelp() {
+  const format = selectedImportFormat();
+  state.importFormat = format;
+  if ($('importFormatHelp')) {
+    $('importFormatHelp').textContent = importFormatHelpText[format] || importFormatHelpText.auto;
+  }
+}
+
 async function importJson() {
   const jsonContent = $('authJsonInput').value.trim();
   if (!jsonContent) return toast('请先粘贴账号 JSON');
+  const importFormat = selectedImportFormat();
   setOutput('正在导入粘贴内容...');
   const res = await fetch('/_admin/import-json', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jsonContent: jsonContent })
+    body: JSON.stringify({ jsonContent: jsonContent, format: importFormat })
   });
   const data = await res.json();
   setOutput(data);
@@ -4283,6 +4318,7 @@ $('rotateBtn').onclick = rotateKey;
 $('shutdownBtn').onclick = shutdownGateway;
 $('importCurrentBtn').onclick = importCurrent;
 $('importJsonBtn').onclick = importJson;
+$('importFormatSelect').onchange = syncImportFormatHelp;
 $('overviewOpenWakeupBtn').onclick = function() { setActiveTab('wakeup'); };
 $('overviewRefreshAllBtn').onclick = function() { refreshQuota(allAccountIds()); };
 $('saveQuotaAutoRefreshBtn').onclick = function() { saveQuotaAutoRefresh(); };

@@ -504,9 +504,13 @@ async function handleImportCurrent(req, res) {
 async function handleImportJson(req, res) {
   const body = await readBody(req);
   const payload = JSON.parse(body.toString('utf8'));
-  const result = await importFromJsonContent(payload.jsonContent || payload.content || '');
+  const result = await importFromJsonContent(
+    payload.jsonContent || payload.content || '',
+    payload.format || payload.importFormat || 'auto'
+  );
   return jsonResponse(res, 200, {
     ok: true,
+    importFormat: result.importFormat,
     imported: result.imported,
     currentAccount: result.currentAccount,
     currentAccountId: result.currentAccountId,

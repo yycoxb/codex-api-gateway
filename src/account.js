@@ -97,6 +97,16 @@ function normalizeExportFormat(format) {
   throw new Error(`不支持的导出格式: ${format}`);
 }
 
+function normalizeImportFormat(format) {
+  const raw = String(format || 'auto').trim().toLowerCase().replace(/_/g, '-');
+  if (!raw || raw === 'auto') return 'auto';
+  if (raw === 'gateway' || raw === 'codex-api-gateway') return 'gateway';
+  if (raw === 'cockpit' || raw === 'cockpit-tools') return 'cockpit-tools';
+  if (raw === 'sub2api') return 'sub2api';
+  if (raw === 'cpa' || raw === 'token-storage') return 'cpa';
+  throw new Error(`不支持的导入格式: ${format}`);
+}
+
 function normalizeTimestampToIso(value) {
   if (typeof value === 'string') {
     const trimmed = value.trim();
@@ -713,6 +723,7 @@ function accountFromAuthObject(auth, importedFrom = 'json') {
     sourceId: auth.sourceId || auth.id || null,
     email,
     accountId,
+    organizationId: auth.organizationId || auth.organization_id || null,
     authMode: auth.authMode || auth.auth_mode || 'oauth',
     authProvider: auth.authProvider || auth.auth_provider || tokenInfo.authProvider,
     userId: auth.userId || auth.user_id || tokenInfo.userId,
@@ -742,6 +753,76 @@ function accountFromAuthObject(auth, importedFrom = 'json') {
     updatedAt: nowMs(),
   };
   return account;
+}
+
+function rawImportItems(parsed) {
+  return Array.isArray(parsed)
+    ? parsed
+    : (Array.isArray(parsed?.accounts) ? parsed.accounts : [parsed]);
+}
+
+function looksLikeSub2apiAccount(item) {
+  return Boolean(item?.credentials && typeof item.credentials === 'object' && !Array.isArray(item.credentials));
+}
+
+function looksLikeCpaTokenStorage(item) {
+  return Boolean(
+    item?.type === 'codex' &&
+    (item.access_token || item.id_token || item.refresh_token) &&
+    !item.tokens
+  );
+}
+
+function detectImportFormat(parsed, requestedFormat) {
+  if (requestedFormat !== 'auto') return requestedFormat;
+  if (parsed?.type === 'sub2api-data') return 'sub2api';
+  if (parsed?.schema === 'codex-api-gateway.accounts') return 'gateway';
+  const items = rawImportItems(parsed);
+  const sample = items.find(Boolean);
+  if (looksLikeSub2apiAccount(sample)) return 'sub2api';
+  if (looksLikeCpaTokenStorage(sample)) return 'cpa';
+  return 'gateway';
+}
+
+function normalizeSub2apiImportItem(item) {
+  if (!looksLikeSub2apiAccount(item)) return item;
+  const credentials = item.credentials || {};
+  return compactObject({
+    email: credentials.email || item.email || undefined,
+    account_id: credentials.chatgpt_account_id || credentials.account_id || item.account_id || undefined,
+    user_id: credentials.chatgpt_user_id || credentials.user_id || item.user_id || undefined,
+    organization_id: credentials.organization_id || item.organization_id || undefined,
+    account_name: item.name || item.account_name || undefined,
+    plan_type: credentials.plan_type || item.plan_type || undefined,
+    subscription_active_until: credentials.subscription_expires_at || item.subscription_active_until || undefined,
+    auth_mode: 'oauth',
+    tokens: {
+      id_token: credentials.id_token,
+      access_token: credentials.access_token,
+      refresh_token: credentials.refresh_token || null,
+    },
+  });
+}
+
+function normalizeCpaImportItem(item) {
+  if (!looksLikeCpaTokenStorage(item)) return item;
+  return compactObject({
+    email: item.email || undefined,
+    account_id: item.account_id || undefined,
+    token_updated_at: item.last_refresh || undefined,
+    auth_mode: 'oauth',
+    tokens: {
+      id_token: item.id_token,
+      access_token: item.access_token,
+      refresh_token: item.refresh_token || null,
+    },
+  });
+}
+
+function normalizeImportItem(item, importFormat) {
+  if (importFormat === 'sub2api') return normalizeSub2apiImportItem(item);
+  if (importFormat === 'cpa') return normalizeCpaImportItem(item);
+  return item;
 }
 
 function findAccountIndex(accounts, account) {
@@ -828,27 +909,29 @@ export async function importFromOAuthTokens(tokens, metadata = {}) {
   return await upsertAccount(account, true);
 }
 
-export async function importFromJsonContent(jsonContent) {
+export async function importFromJsonContent(jsonContent, format = 'auto') {
   let parsed;
   try {
     parsed = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
   } catch (err) {
     throw new Error(`JSON 解析失败: ${err.message}`);
   }
-  const items = Array.isArray(parsed)
-    ? parsed
-    : (Array.isArray(parsed?.accounts) ? parsed.accounts : [parsed]);
+  const requestedFormat = normalizeImportFormat(format);
+  const importFormat = detectImportFormat(parsed, requestedFormat);
+  const items = rawImportItems(parsed);
   if (!items.length) throw new Error('没有找到可导入的账号');
 
   const accounts = items.map((item, index) => {
     try {
-      return accountFromAuthObject(item, 'pasted-json');
+      return accountFromAuthObject(normalizeImportItem(item, importFormat), `pasted-json:${importFormat}`);
     } catch (err) {
       throw new Error(`第 ${index + 1} 个账号导入失败: ${err.message}`);
     }
   });
 
-  return await upsertAccounts(accounts, accounts[accounts.length - 1]?.id || null);
+  const result = await upsertAccounts(accounts, accounts[accounts.length - 1]?.id || null);
+  result.importFormat = importFormat;
+  return result;
 }
 
 export async function exportAccounts(accountIds = []) {
