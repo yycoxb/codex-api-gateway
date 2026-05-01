@@ -2880,6 +2880,7 @@ export function renderAdminHtml() {
 
 <script>
 const ACCOUNT_ORDER_STORAGE_KEY = 'codex-api-gateway.account-order.v1';
+const RUNTIME_ACTIVITY_HOLD_MS = 12000;
 const state = {
   data: null,
   showKey: false,
@@ -3410,6 +3411,19 @@ function requestSummaryTags(request) {
   return tags.filter(Boolean).slice(0, 4);
 }
 
+function recentRuntimeAccount(runtime) {
+  runtime = runtime || {};
+  if (runtime.currentAccount) return null;
+  const finishedAt = Number(runtime.lastFinishedAt || 0);
+  if (!runtime.lastAccount || !finishedAt) return null;
+  return Date.now() - finishedAt <= RUNTIME_ACTIVITY_HOLD_MS ? runtime.lastAccount : null;
+}
+
+function runtimeVisualAccount(runtime) {
+  runtime = runtime || {};
+  return runtime.currentAccount || recentRuntimeAccount(runtime);
+}
+
 function renderLocalAccessRuntime() {
   const box = $('localAccessRuntime');
   if (!box || !state.data) return;
@@ -3417,7 +3431,8 @@ function renderLocalAccessRuntime() {
   const activeAccount = runtime.currentAccount || null;
   const lastAccount = runtime.lastAccount || null;
   const activeCount = Number(runtime.activeCount || 0);
-  box.classList.toggle('live', activeCount > 0);
+  const recentAccount = recentRuntimeAccount(runtime);
+  box.classList.toggle('live', activeCount > 0 || !!recentAccount);
   if (activeAccount) {
     const started = Number(runtime.currentStartedAt || 0);
     const runningText = started ? (' · 已运行 ' + durationText(Date.now() - started)) : '';
@@ -3431,7 +3446,10 @@ function renderLocalAccessRuntime() {
     const finished = runtime.lastFinishedAt ? formatShortDate(runtime.lastFinishedAt) : '-';
     const tags = requestSummaryTags(runtime.lastRequest);
     const tagText = tags.length ? ' · ' + escapeHtml(tags.join(' · ')) : '';
-    box.innerHTML = '<div class="runtime-main">最近 API 使用：<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + ' · ' + escapeHtml(finished) + '</div>' + requestDiagnosticsHtml(runtime.lastRequest);
+    const recentActive = !!recentAccount;
+    const prefix = recentActive ? 'API 刚刚使用：' : '最近 API 使用：';
+    const tail = recentActive ? ' · 保持高亮中' : (' · ' + escapeHtml(finished));
+    box.innerHTML = '<div class="runtime-main">' + prefix + '<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + tail + '</div>' + requestDiagnosticsHtml(runtime.lastRequest);
     box.classList.add('show');
     return;
   }
@@ -3441,14 +3459,19 @@ function renderLocalAccessRuntime() {
 
 function applyApiRuntimeState(runtime) {
   runtime = runtime || {};
+  const visualAccount = runtimeVisualAccount(runtime);
   const activeId = runtime.currentAccount && runtime.currentAccount.id;
+  const visualId = visualAccount && visualAccount.id;
+  const visualLabel = activeId ? 'API使用中' : '刚刚使用';
   document.querySelectorAll('.acct-card[data-account-id]').forEach(function(card) {
-    const isUsing = !!activeId && card.dataset.accountId === activeId;
+    const isUsing = !!visualId && card.dataset.accountId === visualId;
     card.classList.toggle('api-using', isUsing);
     const existing = card.querySelector('[data-runtime-api-using]');
     if (isUsing && !existing) {
       const badges = card.querySelector('.badges');
-      if (badges) badges.insertAdjacentHTML('afterbegin', '<span class="current-tag" data-runtime-api-using>API使用中</span>');
+      if (badges) badges.insertAdjacentHTML('afterbegin', '<span class="current-tag" data-runtime-api-using>' + visualLabel + '</span>');
+    } else if (isUsing && existing) {
+      existing.textContent = visualLabel;
     } else if (!isUsing && existing) {
       existing.remove();
     }
@@ -3709,7 +3732,9 @@ function renderAccounts() {
     return;
   }
   const runtime = state.data.localAccessRuntime || {};
-  const activeApiAccountId = runtime.currentAccount && runtime.currentAccount.id;
+  const visualRuntimeAccount = runtimeVisualAccount(runtime);
+  const activeApiAccountId = visualRuntimeAccount && visualRuntimeAccount.id;
+  const apiUsingLabel = runtime.currentAccount ? 'API使用中' : '刚刚使用';
 
   list.innerHTML = accounts.map(function(account) {
     const current = account.id === currentId;
@@ -3721,7 +3746,7 @@ function renderAccounts() {
     return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>API使用中</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="account-meta">' +
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
