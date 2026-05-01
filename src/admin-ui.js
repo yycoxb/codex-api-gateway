@@ -3486,7 +3486,6 @@ function renderAccounts() {
         '<span class="card-date">' + escapeHtml(formatShortDate(created)) + '</span>' +
         '<div class="card-actions">' +
           '<button class="icon-btn" data-switch-codex-app="' + escapeHtml(account.id) + '" title="登录到 Codex App">${icons.server}</button>' +
-          '<button class="icon-btn" data-wakeup-account="' + escapeHtml(account.id) + '" title="唤醒此账号">${icons.play}</button>' +
           '<button class="icon-btn" data-refresh-quota="' + escapeHtml(account.id) + '" title="刷新用量">${icons.refresh}</button>' +
           '<button class="icon-btn" data-export-account="' + escapeHtml(account.id) + '" title="导出账号 JSON">${icons.upload}</button>' +
           '<button class="icon-btn" data-move-account="up" data-account-id="' + escapeHtml(account.id) + '" title="上移账号">↑</button>' +
