@@ -3562,10 +3562,8 @@ function renderWakeupAccounts() {
     const selected = state.selectedWakeupIds.has(account.id);
     const current = !apiServiceActive && account.id === state.data.currentAccountId;
     const apiMember = apiServiceActive && localAccessIds.has(account.id);
-    const gatewayDefault = apiServiceActive && account.id === state.data.currentAccountId;
     const badges = (current ? '<span class="current-tag">当前</span>' : '') +
-      (apiMember ? '<span class="member-tag">API成员</span>' : '') +
-      (gatewayDefault ? '<span class="default-tag" title="API 服务模式下不是正在调用的账号，只是单账号模式/手动切换的默认值">单账号默认</span>' : '');
+      (apiMember ? '<span class="member-tag">API成员</span>' : '');
     const plan = planLabel(account.planType);
     const quota = account.quota || {};
     const hourly = quota.hourly_percentage == null ? '-' : quota.hourly_percentage + '%';
