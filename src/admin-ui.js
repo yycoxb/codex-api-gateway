@@ -1088,6 +1088,45 @@ export function renderAdminHtml() {
       color: var(--text-primary);
     }
 
+    .runtime-main {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .request-diagnostics {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .request-diagnostics summary {
+      width: fit-content;
+      cursor: pointer;
+      color: var(--text-secondary);
+      user-select: none;
+    }
+
+    .request-diagnostics summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .request-diagnostics summary::after {
+      content: ' ›';
+    }
+
+    .request-diagnostics[open] summary::after {
+      content: '⌄';
+      margin-left: 4px;
+    }
+
+    .diagnostic-line {
+      margin-top: 6px;
+      word-break: break-word;
+      line-height: 1.45;
+    }
+
     .local-access-member-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -2409,7 +2448,6 @@ export function renderAdminHtml() {
                 <option value="fast">快速</option>
                 <option value="passthrough">跟随客户端</option>
               </select>
-              <button id="saveApiSpeedModeBtn">保存</button>
               <span class="copy-extra"></span>
             </div>
           </div>
@@ -3243,7 +3281,7 @@ function syncApiSelectionControls() {
   if ($('apiPoolHint')) {
     const savedCount = selectedApiAccountIds().length;
     const active = state.data && state.data.codexApp && state.data.codexApp.apiService && state.data.codexApp.apiService.active;
-    $('apiPoolHint').textContent = (active ? 'Codex App 当前已接入本地 API 服务。' : '这里的选择只影响 API 服务集合；不会切换 Codex App。') + ' 已保存集合：' + savedCount + ' 个账号。';
+    $('apiPoolHint').textContent = (active ? '已接入' : '未接入') + ' · 已保存 ' + savedCount + ' 个账号';
   }
 }
 
@@ -3282,14 +3320,42 @@ function requestDiagnosticsHtml(request) {
   const headers = request.headers || {};
   const parts = [];
   Object.keys(body).slice(0, 10).forEach(function(key) {
-    parts.push(key + '=' + String(body[key]));
+    const value = String(body[key]);
+    if (!value || value === '[object]') return;
+    parts.push(key + '=' + value);
   });
   Object.keys(headers).slice(0, 6).forEach(function(key) {
-    parts.push('header.' + key + '=' + String(headers[key]));
+    const value = String(headers[key]);
+    if (!value || value === '[object]') return;
+    parts.push('header.' + key + '=' + value);
   });
-  return '<div class="api-pool-hint">' + (parts.length
-    ? '请求诊断：' + escapeHtml(parts.join(' · '))
-    : '请求诊断：未发现 model/speed/tier/effort 相关字段') + '</div>';
+  if (!parts.length) return '';
+  return '<details class="request-diagnostics">' +
+    '<summary>诊断详情</summary>' +
+    '<div class="diagnostic-line">请求诊断：' + escapeHtml(parts.join(' · ')) + '</div>' +
+  '</details>';
+}
+
+function requestSummaryTags(request) {
+  if (!request) return [];
+  const body = request.body || {};
+  const tags = [];
+  if (body.model) tags.push(String(body.model));
+  const effort = body['reasoning.effort'] || body.reasoning_effort || body.effort;
+  if (effort) tags.push(String(effort));
+  const rewrite = String(body['gateway.service_tier_rewrite'] || '');
+  const mode = String(body['gateway.service_tier_mode'] || '');
+  const tier = String(body.service_tier || '');
+  if (tier) {
+    tags.push(tier);
+  } else if (rewrite.includes('->priority')) {
+    tags.push('priority');
+  } else if (rewrite.includes('->removed')) {
+    tags.push('标准');
+  } else if (mode) {
+    tags.push(serviceTierModeLabel(mode));
+  }
+  return tags.filter(Boolean).slice(0, 4);
 }
 
 function renderLocalAccessRuntime() {
@@ -3303,13 +3369,17 @@ function renderLocalAccessRuntime() {
   if (activeAccount) {
     const started = Number(runtime.currentStartedAt || 0);
     const runningText = started ? (' · 已运行 ' + durationText(Date.now() - started)) : '';
-    box.innerHTML = 'API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + requestDiagnosticsHtml(runtime.currentRequest);
+    const tags = requestSummaryTags(runtime.currentRequest);
+    const tagText = tags.length ? ' · ' + escapeHtml(tags.join(' · ')) : '';
+    box.innerHTML = '<div class="runtime-main">API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + tagText + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + '</div>' + requestDiagnosticsHtml(runtime.currentRequest);
     box.classList.add('show');
     return;
   }
   if (lastAccount) {
     const finished = runtime.lastFinishedAt ? formatShortDate(runtime.lastFinishedAt) : '-';
-    box.innerHTML = '最近 API 使用：<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b> · ' + escapeHtml(finished) + requestDiagnosticsHtml(runtime.lastRequest);
+    const tags = requestSummaryTags(runtime.lastRequest);
+    const tagText = tags.length ? ' · ' + escapeHtml(tags.join(' · ')) : '';
+    box.innerHTML = '<div class="runtime-main">最近 API 使用：<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + ' · ' + escapeHtml(finished) + '</div>' + requestDiagnosticsHtml(runtime.lastRequest);
     box.classList.add('show');
     return;
   }
@@ -3956,7 +4026,7 @@ async function loadState() {
   if ($('localAccessHint')) {
     const ids = (state.data.localAccess && state.data.localAccess.accountIds) || [];
     const active = state.data.codexApp && state.data.codexApp.apiService && state.data.codexApp.apiService.active;
-    $('localAccessHint').textContent = (active ? 'Codex App 已接入本地 API 服务。' : '点击“添加账号”维护 API 服务集合；播放按钮才会切到 API 服务模式。') + (ids.length ? ' 已保存集合：' + ids.length + ' 个。' : '');
+    $('localAccessHint').textContent = (active ? '已接入' : '未接入') + ' · ' + (ids.length ? ('成员 ' + ids.length + ' 个') : '未选择成员');
   }
   renderLocalAccessMembers();
   renderLocalAccessRuntime();
@@ -4496,7 +4566,6 @@ $('toggleKeyBtn').onclick = function() {
 $('copyChatBtn').onclick = function() { copyText(state.data.baseUrl + '/chat/completions'); };
 $('reloadBtn').onclick = loadState;
 $('testModelsBtn').onclick = openApiStatsModal;
-$('saveApiSpeedModeBtn').onclick = saveApiSpeedMode;
 $('apiSpeedMode').onchange = saveApiSpeedMode;
 $('apiStatsModalCloseBtn').onclick = closeApiStatsModal;
 $('apiStatsCloseFooterBtn').onclick = closeApiStatsModal;
