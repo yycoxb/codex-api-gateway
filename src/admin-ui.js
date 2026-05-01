@@ -2549,7 +2549,6 @@ export function renderAdminHtml() {
           <button id="overviewRefreshAllBtn">${icons.refresh} 刷新状态</button>
           <button id="overviewImportAccountBtn">${icons.folderPlus} 添加 / 导入账号</button>
           <button id="overviewExportSelectedBtn">${icons.upload} 导出选中</button>
-          <button id="overviewOpenWakeupBtn">${icons.play} 打开唤醒任务</button>
         </div>
         <div class="toolbar-right">
           <div class="quota-controls">
@@ -4806,7 +4805,6 @@ $('shutdownBtn').onclick = shutdownGateway;
 $('importCurrentBtn').onclick = importCurrent;
 $('importJsonBtn').onclick = importJson;
 $('importFormatSelect').onchange = syncImportFormatHelp;
-$('overviewOpenWakeupBtn').onclick = function() { setActiveTab('wakeup'); };
 $('overviewRefreshAllBtn').onclick = function() { refreshQuota(allAccountIds()); };
 $('saveQuotaAutoRefreshBtn').onclick = function() { saveQuotaAutoRefresh(); };
 $('runQuotaAutoRefreshNowBtn').onclick = runQuotaAutoRefreshNow;
