@@ -110,7 +110,7 @@ function safeRequestDiagnostics(req, body, target) {
   };
 }
 
-function stripPriorityServiceTier(body) {
+function applyServiceTierMode(body, mode = 'normal') {
   const raw = Buffer.isBuffer(body) ? body.toString('utf8') : String(body || '');
   if (!raw.trim()) return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
   let parsed;
@@ -123,11 +123,30 @@ function stripPriorityServiceTier(body) {
     return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
   }
   const tier = String(parsed.service_tier || '').trim().toLowerCase();
-  if (tier !== 'priority') return { body: Buffer.isBuffer(body) ? body : Buffer.from(raw), rewrite: null };
+  const normalizedMode = String(mode || 'normal').trim().toLowerCase();
+  if (normalizedMode === 'fast') {
+    parsed.service_tier = 'priority';
+    return {
+      body: Buffer.from(JSON.stringify(parsed)),
+      rewrite: tier === 'priority'
+        ? { 'gateway.service_tier_mode': 'fast' }
+        : { 'gateway.service_tier_rewrite': `${tier || '<missing>'}->priority` },
+    };
+  }
+  if (normalizedMode === 'passthrough') {
+    return {
+      body: Buffer.isBuffer(body) ? body : Buffer.from(raw),
+      rewrite: { 'gateway.service_tier_mode': 'passthrough' },
+    };
+  }
+  if (!tier) return {
+    body: Buffer.isBuffer(body) ? body : Buffer.from(raw),
+    rewrite: { 'gateway.service_tier_mode': 'normal' },
+  };
   delete parsed.service_tier;
   return {
     body: Buffer.from(JSON.stringify(parsed)),
-    rewrite: { 'gateway.service_tier_rewrite': 'priority->removed' },
+    rewrite: { 'gateway.service_tier_rewrite': `${tier}->removed` },
   };
 }
 
@@ -509,7 +528,8 @@ async function proxyCodexRequest(req, res, body) {
     // downstream stream semantics separate.
     const downstreamStreamMode = chatMode ? chatContext.stream : isStreamRequest(req, body);
     const upstreamStreamMode = chatMode ? true : downstreamStreamMode;
-    const serviceTierRewrite = stripPriorityServiceTier(body);
+    const localAccessConfig = await loadLocalAccessConfig();
+    const serviceTierRewrite = applyServiceTierMode(body, localAccessConfig.serviceTierMode);
     body = serviceTierRewrite.body;
     const requestDiagnostics = safeRequestDiagnostics(req, body, target);
     if (serviceTierRewrite.rewrite) Object.assign(requestDiagnostics.body, serviceTierRewrite.rewrite);

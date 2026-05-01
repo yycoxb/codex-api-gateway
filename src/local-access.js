@@ -8,6 +8,7 @@ const DEFAULT_LOCAL_ACCESS = {
   enabled: true,
   accountIds: [],
   routingStrategy: 'auto',
+  serviceTierMode: 'normal',
   restrictFreeAccounts: true,
   createdAt: 0,
   updatedAt: 0,
@@ -22,6 +23,12 @@ const STRATEGIES = new Set([
   'expiry_late_first',
   'plan_high_first',
   'plan_low_first',
+]);
+
+const SERVICE_TIER_MODES = new Set([
+  'normal',
+  'fast',
+  'passthrough',
 ]);
 
 let roundRobinCursor = 0;
@@ -44,6 +51,13 @@ function normalizeRoutingStrategy(value) {
   return STRATEGIES.has(raw) ? raw : DEFAULT_LOCAL_ACCESS.routingStrategy;
 }
 
+function normalizeServiceTierMode(value) {
+  const raw = String(value || DEFAULT_LOCAL_ACCESS.serviceTierMode).trim().toLowerCase();
+  if (raw === 'standard' || raw === 'default') return 'normal';
+  if (raw === 'priority') return 'fast';
+  return SERVICE_TIER_MODES.has(raw) ? raw : DEFAULT_LOCAL_ACCESS.serviceTierMode;
+}
+
 function normalizeLocalAccess(raw) {
   const now = nowMs();
   const hasRestrictFreeAccounts = raw && Object.prototype.hasOwnProperty.call(raw, 'restrictFreeAccounts');
@@ -54,6 +68,7 @@ function normalizeLocalAccess(raw) {
     enabled: raw?.enabled !== false,
     accountIds: normalizeAccountIds(raw?.accountIds),
     routingStrategy: normalizeRoutingStrategy(raw?.routingStrategy),
+    serviceTierMode: normalizeServiceTierMode(raw?.serviceTierMode || raw?.speedMode),
     restrictFreeAccounts: hasRestrictFreeAccounts ? raw.restrictFreeAccounts !== false : DEFAULT_LOCAL_ACCESS.restrictFreeAccounts,
     createdAt: Number(raw?.createdAt || now),
     updatedAt: Number(raw?.updatedAt || now),
@@ -205,6 +220,7 @@ export async function saveLocalAccessConfig(payload = {}) {
     ...current,
     ...payload,
     routingStrategy: normalizeRoutingStrategy(payload.routingStrategy ?? current.routingStrategy),
+    serviceTierMode: normalizeServiceTierMode(payload.serviceTierMode ?? payload.speedMode ?? current.serviceTierMode),
     accountIds: normalizeAccountIds(payload.accountIds ?? current.accountIds, validIds),
     updatedAt: nowMs(),
   });

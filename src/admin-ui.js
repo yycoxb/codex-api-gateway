@@ -2402,6 +2402,16 @@ export function renderAdminHtml() {
               <button class="icon-btn" id="toggleKeyBtn" title="显示/隐藏密钥">${icons.eye}</button>
               <button class="icon-btn copy-extra" data-copy-secret="apiKey" title="复制密钥">${icons.copy}</button>
             </div>
+            <div class="config-row">
+              <div class="label">速度</div>
+              <select class="input" id="apiSpeedMode">
+                <option value="normal">标准</option>
+                <option value="fast">快速</option>
+                <option value="passthrough">跟随客户端</option>
+              </select>
+              <button id="saveApiSpeedModeBtn">保存</button>
+              <span class="copy-extra"></span>
+            </div>
           </div>
 
           <div class="local-note" id="localAccessHint">点击“添加账号”维护 API 服务集合；播放按钮才会切到 API 服务模式。</div>
@@ -3017,6 +3027,14 @@ function strategyLabel(value) {
   }
 }
 
+function serviceTierModeLabel(value) {
+  switch (String(value || 'normal')) {
+    case 'fast': return '快速';
+    case 'passthrough': return '跟随客户端';
+    default: return '标准';
+  }
+}
+
 function windowLabel(minutes, fallback) {
   const m = Number(minutes || 0);
   if (m >= 10080) return 'Weekly';
@@ -3371,7 +3389,7 @@ function renderApiStatsPanel() {
   if ($('statsApiKey')) $('statsApiKey').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('statsPort')) $('statsPort').textContent = port;
   if ($('statsChatUrl')) $('statsChatUrl').textContent = chatUrl || '-';
-  if ($('statsRoutingStrategy')) $('statsRoutingStrategy').textContent = strategyLabel(local.routingStrategy);
+  if ($('statsRoutingStrategy')) $('statsRoutingStrategy').textContent = strategyLabel(local.routingStrategy) + ' / ' + serviceTierModeLabel(local.serviceTierMode);
   if ($('statsMemberCount')) $('statsMemberCount').textContent = ((local.accountIds || []).length || 0) + ' 个';
   document.querySelectorAll('[data-stats-range]').forEach(function(button) {
     button.classList.toggle('active', button.dataset.statsRange === state.statsRange);
@@ -3480,6 +3498,24 @@ async function saveApiPool(options) {
   syncApiSelectionControls();
   toast('已保存 API 服务集合：' + (data.accountIds || []).length + ' 个账号');
   return data;
+}
+
+async function saveApiSpeedMode() {
+  if (!state.data) return;
+  const mode = $('apiSpeedMode') ? $('apiSpeedMode').value : 'normal';
+  setOutput('正在保存 API 速度模式...');
+  const res = await fetch('/_admin/local-access', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serviceTierMode: mode })
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok) return toast('保存速度失败');
+  state.data.localAccess = data;
+  if ($('apiSpeedMode')) $('apiSpeedMode').value = data.serviceTierMode || mode;
+  renderApiStatsPanel();
+  toast('API 速度已切换为：' + serviceTierModeLabel(data.serviceTierMode || mode));
 }
 
 
@@ -3909,6 +3945,7 @@ async function loadState() {
   state.selectionInitialized = true;
   $('baseUrl').textContent = state.data.baseUrl;
   $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
+  if ($('apiSpeedMode')) $('apiSpeedMode').value = (state.data.localAccess && state.data.localAccess.serviceTierMode) || 'normal';
   if ($('localAccessStatus')) {
     const local = state.data.localAccess || {};
     const running = isApiServiceActive();
@@ -4459,6 +4496,8 @@ $('toggleKeyBtn').onclick = function() {
 $('copyChatBtn').onclick = function() { copyText(state.data.baseUrl + '/chat/completions'); };
 $('reloadBtn').onclick = loadState;
 $('testModelsBtn').onclick = openApiStatsModal;
+$('saveApiSpeedModeBtn').onclick = saveApiSpeedMode;
+$('apiSpeedMode').onchange = saveApiSpeedMode;
 $('apiStatsModalCloseBtn').onclick = closeApiStatsModal;
 $('apiStatsCloseFooterBtn').onclick = closeApiStatsModal;
 $('apiStatsModal').onclick = function(event) { if (event.target === $('apiStatsModal')) closeApiStatsModal(); };
