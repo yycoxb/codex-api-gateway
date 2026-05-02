@@ -2988,6 +2988,7 @@ const state = {
   statePollTimer: null,
   runtimePollTimer: null,
   runtimePollBusy: false,
+  runtimeDiagnosticsOpen: false,
   loadingState: false,
   statsRange: 'daily',
   addTab: 'oauth',
@@ -3473,10 +3474,18 @@ function requestDiagnosticsHtml(request) {
     parts.push('header.' + key + '=' + value);
   });
   if (!parts.length) return '';
-  return '<details class="request-diagnostics">' +
+  return '<details class="request-diagnostics"' + (state.runtimeDiagnosticsOpen ? ' open' : '') + '>' +
     '<summary>诊断详情</summary>' +
     '<div class="diagnostic-line">请求诊断：' + escapeHtml(parts.join(' · ')) + '</div>' +
   '</details>';
+}
+
+function bindRuntimeDiagnosticsToggle(box) {
+  const details = box && box.querySelector ? box.querySelector('.request-diagnostics') : null;
+  if (!details) return;
+  details.ontoggle = function() {
+    state.runtimeDiagnosticsOpen = details.open;
+  };
 }
 
 function requestSummaryTags(request) {
@@ -3530,6 +3539,7 @@ function renderLocalAccessRuntime() {
     const tagText = tags.length ? ' · ' + escapeHtml(tags.join(' · ')) : '';
     box.innerHTML = '<div class="runtime-main">API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + tagText + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + '</div>' + requestDiagnosticsHtml(runtime.currentRequest);
     box.classList.add('show');
+    bindRuntimeDiagnosticsToggle(box);
     return;
   }
   if (lastAccount) {
@@ -3541,6 +3551,7 @@ function renderLocalAccessRuntime() {
     const tail = recentActive ? ' · 保持高亮中' : (' · ' + escapeHtml(finished));
     box.innerHTML = '<div class="runtime-main">' + prefix + '<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + tail + '</div>' + requestDiagnosticsHtml(runtime.lastRequest);
     box.classList.add('show');
+    bindRuntimeDiagnosticsToggle(box);
     return;
   }
   box.textContent = '';
