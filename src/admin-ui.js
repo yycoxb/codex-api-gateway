@@ -56,9 +56,11 @@ export function renderAdminHtml() {
       --shadow-sm: 0 10px 30px rgba(0, 0, 0, 0.34);
       --shadow-md: 0 22px 58px rgba(0, 0, 0, 0.48);
       --shadow-card: 0 18px 44px rgba(0, 0, 0, 0.36);
-      --plan-plus-bg: linear-gradient(135deg, rgba(255, 255, 255, .34) 0%, rgba(226, 232, 240, .18) 42%, rgba(148, 163, 184, .22) 100%);
-      --plan-plus-color: #f8fbff;
-      --plan-plus-border: rgba(226, 232, 240, 0.58);
+      --plan-plus-bg:
+        radial-gradient(circle at 28% 16%, rgba(255, 255, 255, .96), transparent 24%),
+        linear-gradient(135deg, #ffffff 0%, #f8fafc 18%, #cbd5e1 43%, #ffffff 58%, #94a3b8 100%);
+      --plan-plus-color: #ffffff;
+      --plan-plus-border: rgba(255, 255, 255, 0.86);
       --plan-pro-bg: linear-gradient(180deg, rgba(245, 208, 111, .22) 0%, rgba(212, 175, 55, .10) 100%);
       --plan-pro-color: #ffe08a;
       --plan-pro-border: rgba(245, 208, 111, 0.40);
@@ -1750,6 +1752,8 @@ export function renderAdminHtml() {
       min-height: 24px;
       min-width: 58px;
       padding: 0 12px;
+      position: relative;
+      overflow: hidden;
       font-size: 12px;
       font-weight: 900;
       letter-spacing: .025em;
@@ -1762,6 +1766,16 @@ export function renderAdminHtml() {
         0 5px 14px rgba(16, 185, 129, .12);
     }
 
+    .tier-badge::before {
+      content: '';
+      position: absolute;
+      inset: 1px 8px auto 8px;
+      height: 45%;
+      border-radius: inherit;
+      background: linear-gradient(180deg, rgba(255, 255, 255, .66), rgba(255, 255, 255, 0));
+      pointer-events: none;
+    }
+
     .tier-badge.free {
       background: var(--plan-free-bg);
       color: var(--plan-free-color);
@@ -1771,10 +1785,18 @@ export function renderAdminHtml() {
         0 4px 10px rgba(71, 85, 105, .08);
     }
 
+    .tier-badge.free::before {
+      opacity: .22;
+    }
+
     .tier-badge.pro {
       background: var(--plan-pro-bg);
       color: var(--plan-pro-color);
       border-color: var(--plan-pro-border);
+    }
+
+    .tier-badge.pro::before {
+      background: linear-gradient(180deg, rgba(255, 239, 178, .52), rgba(255, 239, 178, 0));
     }
 
     .account-meta {
@@ -2400,11 +2422,15 @@ export function renderAdminHtml() {
     }
 
     .tier-badge {
-      text-shadow: 0 1px 0 rgba(0, 0, 0, .28);
+      text-shadow:
+        0 1px 0 rgba(0, 0, 0, .52),
+        0 0 8px rgba(255, 255, 255, .40);
       box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, .32),
-        inset 0 -1px 0 rgba(148, 163, 184, .18),
-        0 5px 14px rgba(0, 0, 0, .20);
+        inset 0 1px 0 rgba(255, 255, 255, .92),
+        inset 0 -1px 0 rgba(71, 85, 105, .42),
+        0 0 0 1px rgba(255, 255, 255, .12),
+        0 5px 14px rgba(0, 0, 0, .24),
+        0 0 18px rgba(226, 232, 240, .18);
     }
 
     .tier-badge.pro {
