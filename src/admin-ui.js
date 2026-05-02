@@ -56,9 +56,12 @@ export function renderAdminHtml() {
       --shadow-sm: 0 10px 30px rgba(0, 0, 0, 0.34);
       --shadow-md: 0 22px 58px rgba(0, 0, 0, 0.48);
       --shadow-card: 0 18px 44px rgba(0, 0, 0, 0.36);
-      --plan-plus-bg: linear-gradient(180deg, rgba(245, 208, 111, .22) 0%, rgba(212, 175, 55, .10) 100%);
-      --plan-plus-color: #ffe08a;
-      --plan-plus-border: rgba(245, 208, 111, 0.40);
+      --plan-plus-bg: linear-gradient(135deg, rgba(255, 255, 255, .34) 0%, rgba(226, 232, 240, .18) 42%, rgba(148, 163, 184, .22) 100%);
+      --plan-plus-color: #f8fbff;
+      --plan-plus-border: rgba(226, 232, 240, 0.58);
+      --plan-pro-bg: linear-gradient(180deg, rgba(245, 208, 111, .22) 0%, rgba(212, 175, 55, .10) 100%);
+      --plan-pro-color: #ffe08a;
+      --plan-pro-border: rgba(245, 208, 111, 0.40);
       --plan-free-bg: rgba(255, 255, 255, .055);
       --plan-free-color: #b9ad8d;
       --plan-free-border: rgba(218, 176, 71, .17);
@@ -1768,6 +1771,12 @@ export function renderAdminHtml() {
         0 4px 10px rgba(71, 85, 105, .08);
     }
 
+    .tier-badge.pro {
+      background: var(--plan-pro-bg);
+      color: var(--plan-pro-color);
+      border-color: var(--plan-pro-border);
+    }
+
     .account-meta {
       display: flex;
       flex-direction: column;
@@ -2392,6 +2401,13 @@ export function renderAdminHtml() {
 
     .tier-badge {
       text-shadow: 0 1px 0 rgba(0, 0, 0, .28);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, .32),
+        inset 0 -1px 0 rgba(148, 163, 184, .18),
+        0 5px 14px rgba(0, 0, 0, .20);
+    }
+
+    .tier-badge.pro {
       box-shadow:
         inset 0 1px 0 rgba(255, 239, 178, .16),
         0 5px 14px rgba(0, 0, 0, .20);
@@ -3406,6 +3422,13 @@ function isFreeAccount(account) {
   return String(account && (account.planType || account.plan_type) || '').toLowerCase().includes('free');
 }
 
+function planBadgeClass(plan) {
+  const value = String(plan || '').trim().toUpperCase();
+  if (value === 'FREE') return 'free';
+  if (value === 'PRO') return 'pro';
+  return '';
+}
+
 function apiAccountById() {
   const map = new Map();
   sortedAccounts().forEach(function(account) { map.set(account.id, account); });
@@ -3453,7 +3476,7 @@ function renderLocalAccessMembers() {
       '<span class="local-access-member-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</span>' +
       '<span>' + escapeHtml(primary) + '</span>' +
       '<span>' + escapeHtml(weekly) + '</span>' +
-      '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span>' +
+      '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
     '</div>';
   }).join('') + (accounts.length > 4 ? '<div class="api-pool-hint">还有 ' + (accounts.length - 4) + ' 个账号，点击“添加账号”查看全部。</div>' : '');
 }
@@ -3606,7 +3629,7 @@ function renderApiPoolAccounts() {
         '<div class="api-pool-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div>' +
         '<div class="api-pool-meta">' + escapeHtml(loginLabel(account)) + ' · ' + escapeHtml(quotaText) + '</div>' +
       '</div>' +
-      '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span>' +
+      '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
     '</label>';
   }).join('');
   syncApiSelectionControls();
@@ -3679,7 +3702,7 @@ function renderApiStatsPanel() {
     const quotaText = quota.weekly_percentage == null ? '' : '<span class="stats-pill">Weekly ' + escapeHtml(quota.weekly_percentage + '%') + '</span>';
     return '<div class="stats-account-row">' +
       '<div class="stats-account-main" title="' + escapeHtml(email) + '">' + escapeHtml(maskEmail(email)) + '</div>' +
-      '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span>' +
+      '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
       quotaText +
       '<span class="stats-pill">成功 ' + compactNumber(usage.successCount || 0) + ' / 失败 ' + compactNumber(usage.failureCount || 0) + '</span>' +
       '<span class="stats-pill">' + compactNumber(usage.totalTokens || 0) + ' tokens</span>' +
@@ -3847,7 +3870,7 @@ function renderAccounts() {
     return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="account-meta">' +
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
@@ -4026,7 +4049,7 @@ function renderWakeupAccounts() {
     return '<label class="wakeup-account-row ' + (selected ? 'selected ' : '') + '">' +
       '<input type="checkbox" class="wakeup-task-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '>' +
       '<div class="wakeup-account-main">' +
-        '<div class="wakeup-account-title"><span>' + escapeHtml(maskEmail(account.email)) + '</span><span class="badges">' + badges + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></span></div>' +
+        '<div class="wakeup-account-title"><span>' + escapeHtml(maskEmail(account.email)) + '</span><span class="badges">' + badges + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></span></div>' +
         '<div class="wakeup-account-meta">5h ' + escapeHtml(hourly) + ' · Weekly ' + escapeHtml(weekly) + ' · ' + escapeHtml(loginLabel(account)) + '</div>' +
       '</div>' +
     '</label>';
@@ -4107,7 +4130,7 @@ function renderCodexAppAccounts() {
     return '<div class="codex-app-account-card ' + (isAppCurrent ? 'active ' : '') + (apiMember ? 'api-member ' : '') + '">' +
       '<div class="account-top" style="margin-bottom:0">' +
         '<div class="account-title"><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + badges + '<span class="tier-badge ' + (plan === 'FREE' ? 'free' : '') + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + badges + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="small-line">使用 ' + escapeHtml(loginLabel(account)) + ' 登录 | 用户 ID: ' + escapeHtml(maskId(account.userId || account.accountId)) + '</div>' +
       '<div class="inline-actions" style="justify-content:flex-start">' +
