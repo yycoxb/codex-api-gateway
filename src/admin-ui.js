@@ -3850,8 +3850,8 @@ function renderAccounts() {
           '<button class="icon-btn" data-switch-codex-app="' + escapeHtml(account.id) + '" title="登录到 Codex App">${icons.server}</button>' +
           '<button class="icon-btn" data-refresh-quota="' + escapeHtml(account.id) + '" title="刷新用量">${icons.refresh}</button>' +
           '<button class="icon-btn" data-export-account="' + escapeHtml(account.id) + '" title="导出账号 JSON">${icons.upload}</button>' +
-          '<button class="icon-btn" data-move-account="up" data-account-id="' + escapeHtml(account.id) + '" title="上移账号" aria-label="上移账号">' + icons.chevronUp + '</button>' +
-          '<button class="icon-btn" data-move-account="down" data-account-id="' + escapeHtml(account.id) + '" title="下移账号" aria-label="下移账号">' + icons.chevronDown + '</button>' +
+          '<button class="icon-btn" data-move-account="up" data-account-id="' + escapeHtml(account.id) + '" title="上移账号" aria-label="上移账号">${icons.chevronUp}</button>' +
+          '<button class="icon-btn" data-move-account="down" data-account-id="' + escapeHtml(account.id) + '" title="下移账号" aria-label="下移账号">${icons.chevronDown}</button>' +
           '<button class="icon-btn" data-delete-account="' + escapeHtml(account.id) + '" title="删除账号">${icons.trash}</button>' +
         '</div>' +
       '</div>' +
