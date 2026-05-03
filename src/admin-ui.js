@@ -57,10 +57,10 @@ export function renderAdminHtml() {
       --shadow-md: 0 22px 58px rgba(0, 0, 0, 0.48);
       --shadow-card: 0 18px 44px rgba(0, 0, 0, 0.36);
       --plan-plus-bg:
-        radial-gradient(circle at 28% 16%, rgba(255, 255, 255, .96), transparent 24%),
-        linear-gradient(135deg, #ffffff 0%, #f8fafc 18%, #cbd5e1 43%, #ffffff 58%, #94a3b8 100%);
-      --plan-plus-color: #ffffff;
-      --plan-plus-border: rgba(255, 255, 255, 0.86);
+        linear-gradient(180deg, rgba(255, 255, 255, .62) 0%, rgba(226, 232, 240, .36) 36%, rgba(100, 116, 139, .42) 100%),
+        linear-gradient(135deg, #f8fafc 0%, #cbd5e1 44%, #94a3b8 100%);
+      --plan-plus-color: #1f2937;
+      --plan-plus-border: rgba(226, 232, 240, 0.72);
       --plan-pro-bg: linear-gradient(180deg, rgba(245, 208, 111, .22) 0%, rgba(212, 175, 55, .10) 100%);
       --plan-pro-color: #ffe08a;
       --plan-pro-border: rgba(245, 208, 111, 0.40);
@@ -1769,10 +1769,11 @@ export function renderAdminHtml() {
     .tier-badge::before {
       content: '';
       position: absolute;
-      inset: 1px 8px auto 8px;
-      height: 45%;
+      inset: 1px 10px auto 10px;
+      height: 32%;
       border-radius: inherit;
-      background: linear-gradient(180deg, rgba(255, 255, 255, .66), rgba(255, 255, 255, 0));
+      background: linear-gradient(180deg, rgba(255, 255, 255, .34), rgba(255, 255, 255, 0));
+      opacity: .72;
       pointer-events: none;
     }
 
@@ -2423,20 +2424,20 @@ export function renderAdminHtml() {
 
     .tier-badge {
       text-shadow:
-        0 1px 0 rgba(0, 0, 0, .52),
-        0 0 8px rgba(255, 255, 255, .40);
+        0 1px 0 rgba(255, 255, 255, .40),
+        0 -1px 0 rgba(0, 0, 0, .18);
       box-shadow:
-        inset 0 1px 0 rgba(255, 255, 255, .92),
-        inset 0 -1px 0 rgba(71, 85, 105, .42),
-        0 0 0 1px rgba(255, 255, 255, .12),
-        0 5px 14px rgba(0, 0, 0, .24),
-        0 0 18px rgba(226, 232, 240, .18);
+        inset 0 1px 0 rgba(255, 255, 255, .62),
+        inset 0 -1px 0 rgba(15, 23, 42, .26),
+        0 5px 14px rgba(0, 0, 0, .20),
+        0 0 12px rgba(226, 232, 240, .10);
     }
 
     .tier-badge.pro {
       box-shadow:
         inset 0 1px 0 rgba(255, 239, 178, .16),
         0 5px 14px rgba(0, 0, 0, .20);
+      text-shadow: 0 1px 0 rgba(0, 0, 0, .28);
     }
 
     .tier-badge.free {
