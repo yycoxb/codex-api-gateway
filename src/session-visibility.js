@@ -8,6 +8,8 @@ const DEFAULT_PROVIDER_ID = 'openai';
 const CONFIG_FILE = 'config.toml';
 const STATE_DB_FILE = 'state_5.sqlite';
 const SESSION_DIRS = ['sessions', 'archived_sessions'];
+const BACKUP_ROOT_DIR = path.join('backups', 'session-visibility-repair');
+const BACKUP_KEEP_COUNT = 10;
 
 async function exists(file) {
   try {
@@ -121,9 +123,48 @@ async function copyIfExists(source, target) {
   return true;
 }
 
-async function backupFiles(dataDir, rolloutChanges, includeSqlite, targetProvider) {
-  const backupDir = path.join(dataDir, `backup-${timestampForPath()}-session-visibility-repair`);
+async function createBackupDir(dataDir) {
+  const backupRoot = path.join(dataDir, BACKUP_ROOT_DIR);
+  await fs.mkdir(backupRoot, { recursive: true });
+  const baseName = `backup-${timestampForPath()}`;
+  let backupDir = path.join(backupRoot, baseName);
+  let suffix = 1;
+  while (await exists(backupDir)) {
+    backupDir = path.join(backupRoot, `${baseName}-${suffix}`);
+    suffix += 1;
+  }
   await fs.mkdir(backupDir, { recursive: true });
+  return { backupRoot, backupDir };
+}
+
+async function pruneBackupDirs(backupRoot, keepCount = BACKUP_KEEP_COUNT) {
+  if (!(await exists(backupRoot))) return [];
+  const entries = await fs.readdir(backupRoot, { withFileTypes: true }).catch(() => []);
+  const backups = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.startsWith('backup-')) continue;
+    const full = path.join(backupRoot, entry.name);
+    const stat = await fs.stat(full).catch(() => null);
+    backups.push({
+      name: entry.name,
+      full,
+      mtimeMs: Number(stat?.mtimeMs || 0),
+    });
+  }
+  backups.sort((a, b) => (
+    b.name.localeCompare(a.name) || b.mtimeMs - a.mtimeMs
+  ));
+  const stale = backups.slice(Math.max(0, keepCount));
+  const pruned = [];
+  for (const item of stale) {
+    await fs.rm(item.full, { recursive: true, force: true });
+    pruned.push(item.full);
+  }
+  return pruned;
+}
+
+async function backupFiles(dataDir, rolloutChanges, includeSqlite, targetProvider) {
+  const { backupRoot, backupDir } = await createBackupDir(dataDir);
   const files = [];
 
   for (const change of rolloutChanges) {
@@ -142,6 +183,8 @@ async function backupFiles(dataDir, rolloutChanges, includeSqlite, targetProvide
     instanceRoot: dataDir,
     targetProvider,
     createdAt: new Date().toISOString(),
+    backupRoot,
+    keepCount: BACKUP_KEEP_COUNT,
     note: 'Rollout files are not copied. Only the original first JSONL line is stored because this repair only changes session_meta.payload.model_provider.',
     rolloutFiles: files,
     rolloutLineBackups: rolloutChanges.map((change) => ({
@@ -152,7 +195,8 @@ async function backupFiles(dataDir, rolloutChanges, includeSqlite, targetProvide
     sqliteBackups,
   }, null, 2)}\n`, 'utf8');
 
-  return backupDir;
+  const prunedBackupDirs = await pruneBackupDirs(backupRoot, BACKUP_KEEP_COUNT);
+  return { backupDir, backupRoot, prunedBackupDirs };
 }
 
 async function rewriteRolloutProvider(change) {
@@ -222,7 +266,8 @@ export async function repairSessionVisibility({
     };
   }
 
-  const backupDir = await backupFiles(resolvedDataDir, rolloutChanges, sqliteRowsToUpdate > 0, provider);
+  const backup = await backupFiles(resolvedDataDir, rolloutChanges, sqliteRowsToUpdate > 0, provider);
+  const backupDir = backup.backupDir;
   let updatedSqliteRowCount = 0;
   try {
     if (sqliteRowsToUpdate > 0) {
@@ -245,6 +290,10 @@ export async function repairSessionVisibility({
     rewriteRollouts,
     rolloutRewriteSkipped: !rewriteRollouts,
     backupDir,
+    backupRoot: backup.backupRoot,
+    prunedBackupDirs: backup.prunedBackupDirs,
+    prunedBackupDirCount: backup.prunedBackupDirs.length,
+    backupKeepCount: BACKUP_KEEP_COUNT,
     startedAt,
     finishedAt: nowMs(),
     message: `repaired session visibility: rollout=${rolloutChanges.length}, sqlite=${updatedSqliteRowCount}`,
