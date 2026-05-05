@@ -3212,6 +3212,20 @@ function durationText(ms) {
   return chunks.join(' ');
 }
 
+function formatRequestBytes(value) {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes < 0) return '';
+  if (bytes >= 1024 * 1024) {
+    const mb = bytes / 1024 / 1024;
+    return mb >= 10 ? mb.toFixed(1) + ' MB' : mb.toFixed(2) + ' MB';
+  }
+  if (bytes >= 1024) {
+    const kb = bytes / 1024;
+    return kb >= 10 ? kb.toFixed(1) + ' KB' : kb.toFixed(2) + ' KB';
+  }
+  return Math.round(bytes) + ' B';
+}
+
 function resetText(sec) {
   if (!sec) return '';
   const ms = Number(sec) * 1000;
@@ -3512,7 +3526,14 @@ function requestDiagnosticsHtml(request) {
   if (!request) return '';
   const body = request.body || {};
   const headers = request.headers || {};
+  const size = request.size || {};
   const parts = [];
+  const bodySize = formatRequestBytes(size.bodyBytes);
+  const upstreamBodySize = formatRequestBytes(size.upstreamBodyBytes);
+  const contentLengthSize = formatRequestBytes(size.contentLengthBytes);
+  if (bodySize) parts.push('请求体=' + bodySize);
+  if (upstreamBodySize && upstreamBodySize !== bodySize) parts.push('转发=' + upstreamBodySize);
+  if (contentLengthSize && contentLengthSize !== bodySize) parts.push('Content-Length=' + contentLengthSize);
   Object.keys(body).slice(0, 10).forEach(function(key) {
     const value = String(body[key]);
     if (!value || value === '[object]') return;
@@ -3557,6 +3578,8 @@ function requestSummaryTags(request) {
   } else if (mode) {
     tags.push(serviceTierModeLabel(mode));
   }
+  const sizeTag = formatRequestBytes(request.size && request.size.bodyBytes);
+  if (sizeTag) tags.push(sizeTag);
   return tags.filter(Boolean).slice(0, 4);
 }
 

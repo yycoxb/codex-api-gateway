@@ -100,11 +100,43 @@ function safeHeaderDiagnostics(req) {
   return output;
 }
 
-function safeRequestDiagnostics(req, body, target) {
+function parseHeaderNumber(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (raw === undefined || raw === null || raw === '') return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function bufferBytes(value) {
+  if (Buffer.isBuffer(value)) return value.length;
+  return Buffer.byteLength(String(value || ''), 'utf8');
+}
+
+function requestSizeDiagnostics(req, body, meta = {}) {
+  const bodyBytes = Number.isFinite(meta.bodyBytes) ? Number(meta.bodyBytes) : bufferBytes(body);
+  const upstreamBodyBytes = Number.isFinite(meta.upstreamBodyBytes)
+    ? Number(meta.upstreamBodyBytes)
+    : bodyBytes;
+  const contentLengthBytes = parseHeaderNumber(req?.headers?.['content-length']);
+  const output = {
+    bodyBytes,
+    bodyMb: Number((bodyBytes / 1024 / 1024).toFixed(3)),
+    upstreamBodyBytes,
+    upstreamBodyMb: Number((upstreamBodyBytes / 1024 / 1024).toFixed(3)),
+  };
+  if (contentLengthBytes !== null) {
+    output.contentLengthBytes = contentLengthBytes;
+    output.contentLengthMb = Number((contentLengthBytes / 1024 / 1024).toFixed(3));
+  }
+  return output;
+}
+
+function safeRequestDiagnostics(req, body, target, meta = {}) {
   const parsed = parseRequestJson(body) || {};
   return {
     method: req.method,
     path: target || upstreamPath(req.url) || req.url,
+    size: requestSizeDiagnostics(req, body, meta),
     body: collectSafeDiagnosticFields(parsed),
     headers: safeHeaderDiagnostics(req),
   };
@@ -504,6 +536,7 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
 
 async function proxyCodexRequest(req, res, body) {
   const startedAt = Date.now();
+  const incomingBodyBytes = bufferBytes(body);
   const chatMode = isChatCompletionsPath(req.url);
   let chatContext = null;
   let account = null;
@@ -531,7 +564,10 @@ async function proxyCodexRequest(req, res, body) {
     const localAccessConfig = await loadLocalAccessConfig();
     const serviceTierRewrite = applyServiceTierMode(body, localAccessConfig.serviceTierMode);
     body = serviceTierRewrite.body;
-    const requestDiagnostics = safeRequestDiagnostics(req, body, target);
+    const requestDiagnostics = safeRequestDiagnostics(req, body, target, {
+      bodyBytes: incomingBodyBytes,
+      upstreamBodyBytes: bufferBytes(body),
+    });
     if (serviceTierRewrite.rewrite) Object.assign(requestDiagnostics.body, serviceTierRewrite.rewrite);
     ({ upstream, account } = await sendWithAccountPool({ req, body, target, streamMode: upstreamStreamMode }));
     finishLocalAccessRequest = beginLocalAccessRequest(account, startedAt, {
