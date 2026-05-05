@@ -29,18 +29,38 @@ export function getLocalApiKey(req) {
   return Array.isArray(xApiKey) ? xApiKey[0] : xApiKey;
 }
 
+const DEFAULT_BODY_LIMIT_MB = 64;
+const MAX_BODY_LIMIT_MB = 512;
+
+function formatBytes(bytes) {
+  const mb = bytes / 1024 / 1024;
+  return `${bytes} bytes (${mb.toFixed(2)} MB)`;
+}
+
+function parseContentLength(value) {
+  const raw = Array.isArray(value) ? value[0] : value;
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 function defaultBodyLimitBytes() {
-  const mb = Number(process.env.CODEX_GATEWAY_BODY_LIMIT_MB || 64);
-  const clamped = Number.isFinite(mb) ? Math.max(1, Math.min(512, mb)) : 64;
+  const mb = Number(process.env.CODEX_GATEWAY_BODY_LIMIT_MB || DEFAULT_BODY_LIMIT_MB);
+  const clamped = Number.isFinite(mb) ? Math.max(1, Math.min(MAX_BODY_LIMIT_MB, mb)) : DEFAULT_BODY_LIMIT_MB;
   return Math.round(clamped * 1024 * 1024);
 }
 
 export async function readBody(req, limit = defaultBodyLimitBytes()) {
+  const contentLength = parseContentLength(req.headers?.['content-length']);
+  if (contentLength !== null && contentLength > limit) {
+    throw new Error(`请求体过大: ${formatBytes(contentLength)} > ${formatBytes(limit)}`);
+  }
+
   const chunks = [];
   let total = 0;
   for await (const chunk of req) {
     total += chunk.length;
-    if (total > limit) throw new Error(`请求体过大: ${total} bytes > ${limit} bytes`);
+    if (total > limit) throw new Error(`请求体过大: ${formatBytes(total)} > ${formatBytes(limit)}`);
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
