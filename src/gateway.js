@@ -45,6 +45,8 @@ const RESPONSE_AFFINITY_TTL_MS = 24 * 60 * 60 * 1000;
 const MODEL_COOLDOWN_MAX_MS = 14 * 24 * 60 * 60 * 1000;
 const UPSTREAM_SEND_RETRY_ATTEMPTS = 2;
 const UPSTREAM_SEND_RETRY_BASE_DELAY_MS = 200;
+const MAX_FALLBACK_DIAGNOSTIC_ATTEMPTS = 12;
+const MAX_RUNTIME_COOLDOWNS = 12;
 
 const responseAffinity = new Map();
 const modelCooldowns = new Map();
@@ -64,6 +66,38 @@ function runtimeAccountSummary(account) {
     accountId: account.accountId || account.account_id || null,
     planType: account.planType || account.plan_type || null,
   };
+}
+
+function runtimeAccountRef(account, fallbackId = null) {
+  const summary = runtimeAccountSummary(account);
+  if (summary) return summary;
+  const id = String(fallbackId || '').trim();
+  return id ? { id, email: null, accountId: null, planType: null } : null;
+}
+
+function maskResponseId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (raw.length <= 12) return mask(raw);
+  return `${raw.slice(0, 8)}...${raw.slice(-6)}`;
+}
+
+function redactDiagnosticText(value) {
+  return String(value || '')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/ig, 'Bearer [redacted]')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/ig, 'sk-[redacted]')
+    .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '[jwt-redacted]')
+    .slice(0, 160);
+}
+
+function safeFailureReason(reason, fallback = 'request failed') {
+  const text = redactDiagnosticText(reason || fallback).trim();
+  return text || fallback;
+}
+
+function safeErrorReason(err, fallback = 'request failed') {
+  const code = err?.code || err?.cause?.code || err?.name || '';
+  return safeFailureReason(code ? `${fallback} (${code})` : fallback, fallback);
 }
 
 function safeDiagnosticValue(value) {
@@ -140,6 +174,81 @@ function safeRequestDiagnostics(req, body, target, meta = {}) {
     body: collectSafeDiagnosticFields(parsed),
     headers: safeHeaderDiagnostics(req),
   };
+}
+
+function classifyUpstreamFailure(status, bodyText = '') {
+  const code = Number(status || 0);
+  const text = String(bodyText || '');
+  if (code === 400) {
+    if (/context|length|too.large|maximum|token/i.test(text)) return 'HTTP 400: request rejected by upstream limits';
+    return 'HTTP 400: upstream rejected request';
+  }
+  if (code === 401) return 'HTTP 401: authorization expired or rejected';
+  if (code === 403) {
+    if (/usage_limit|rate_limit|limit_reached|resets_in_seconds|quota|capacity/i.test(text)) {
+      return 'HTTP 403: usage or quota limited';
+    }
+    return 'HTTP 403: upstream denied access';
+  }
+  if (code === 408) return 'HTTP 408: upstream timeout';
+  if (code === 429) return 'HTTP 429: rate or quota limited';
+  if ([500, 502, 503, 504].includes(code)) return `HTTP ${code}: upstream temporarily unavailable`;
+  return code ? `HTTP ${code}: upstream request failed` : 'upstream request failed';
+}
+
+function createRoutingDiagnostics(hint, affinityBinding, accountIds) {
+  const responseAffinity = responseAffinityLookupDiagnostics(hint.previousResponseId, affinityBinding);
+  if (responseAffinity.matched) {
+    responseAffinity.inPool = accountIds.includes(responseAffinity.binding?.accountId);
+  }
+  return {
+    accountCount: accountIds.length,
+    model: hint.modelKey || null,
+    responseAffinity,
+    attempts: [],
+    final: null,
+  };
+}
+
+function pushRoutingAttempt(diagnostics, item = {}) {
+  if (!diagnostics || diagnostics.attempts.length >= MAX_FALLBACK_DIAGNOSTIC_ATTEMPTS) return null;
+  const account = runtimeAccountRef(item.account, item.accountId);
+  const attempt = {
+    timestamp: Date.now(),
+    accountId: account?.id || String(item.accountId || '').trim() || null,
+    email: account?.email || null,
+    account,
+    model: item.model || null,
+    success: item.success === true,
+    statusCode: item.statusCode ?? null,
+    reason: item.reason ? safeFailureReason(item.reason) : null,
+    retryable: item.retryable === true,
+    skipped: item.skipped === true,
+    recovered: item.recovered === true,
+  };
+  if (Number.isFinite(item.cooldownMs) && item.cooldownMs > 0) attempt.cooldownMs = Math.round(item.cooldownMs);
+  diagnostics.attempts.push(attempt);
+  return attempt;
+}
+
+function lastFailedRoutingAttempt(diagnostics) {
+  const attempts = Array.isArray(diagnostics?.attempts) ? diagnostics.attempts : [];
+  for (let i = attempts.length - 1; i >= 0; i -= 1) {
+    if (attempts[i] && attempts[i].success !== true && attempts[i].recovered !== true) return attempts[i];
+  }
+  return null;
+}
+
+function finalizeRoutingDiagnostics(diagnostics, upstream, account) {
+  if (!diagnostics) return diagnostics;
+  const failed = lastFailedRoutingAttempt(diagnostics);
+  diagnostics.final = {
+    ok: Boolean(upstream?.ok),
+    statusCode: upstream?.status ?? null,
+    account: runtimeAccountRef(account),
+    reason: upstream?.ok ? null : (failed?.reason || classifyUpstreamFailure(upstream?.status)),
+  };
+  return diagnostics;
 }
 
 function applyServiceTierMode(body, mode = 'normal') {
@@ -223,6 +332,8 @@ function getLocalAccessRuntimeState() {
     lastStartedAt: lastLocalAccessRequest?.startedAt || null,
     lastFinishedAt: lastLocalAccessRequest?.finishedAt || null,
     lastSuccess: lastLocalAccessRequest?.success ?? null,
+    cooldowns: cooldownRuntimeState(),
+    responseAffinityCount: responseAffinity.size,
   };
 }
 
@@ -265,19 +376,68 @@ function clearModelCooldown(accountId, modelKey) {
   if (key) modelCooldowns.delete(key);
 }
 
-function bindResponseAffinity(responseId, accountId) {
-  const rid = String(responseId || '').trim();
-  const aid = String(accountId || '').trim();
-  if (!rid || !aid) return;
-  pruneRuntimeRoutingState();
-  responseAffinity.set(rid, { accountId: aid, updatedAt: Date.now() });
+function parseCooldownKeyValue(key) {
+  const [accountId, ...rest] = String(key || '').split('\u001f');
+  return { accountId, model: rest.join('\u001f') || null };
 }
 
-function resolveAffinityAccount(previousResponseId) {
+function cooldownRuntimeState() {
+  pruneRuntimeRoutingState();
+  const now = Date.now();
+  return Array.from(modelCooldowns.entries())
+    .map(([key, value]) => {
+      const parsed = parseCooldownKeyValue(key);
+      const until = Number(value?.until || 0);
+      return {
+        accountId: parsed.accountId || null,
+        model: parsed.model || null,
+        until,
+        remainingMs: Math.max(0, until - now),
+      };
+    })
+    .filter((item) => item.accountId && item.remainingMs > 0)
+    .sort((a, b) => Number(a.remainingMs || 0) - Number(b.remainingMs || 0))
+    .slice(0, MAX_RUNTIME_COOLDOWNS);
+}
+
+function responseAffinityBindingDiagnostics(responseId, binding) {
+  if (!responseId || !binding) return null;
+  const ageMs = Math.max(0, Date.now() - Number(binding.updatedAt || 0));
+  return {
+    responseId: maskResponseId(responseId),
+    accountId: binding.accountId || null,
+    account: binding.account || runtimeAccountRef(null, binding.accountId),
+    updatedAt: binding.updatedAt || null,
+    expiresInMs: Math.max(0, RESPONSE_AFFINITY_TTL_MS - ageMs),
+  };
+}
+
+function responseAffinityLookupDiagnostics(previousResponseId, binding) {
+  const requested = Boolean(String(previousResponseId || '').trim());
+  if (!requested) return { requested: false, matched: false };
+  return {
+    requested: true,
+    previousResponseId: maskResponseId(previousResponseId),
+    matched: Boolean(binding),
+    binding: responseAffinityBindingDiagnostics(previousResponseId, binding),
+  };
+}
+
+function bindResponseAffinity(responseId, account) {
+  const rid = String(responseId || '').trim();
+  const aid = String(account?.id || account || '').trim();
+  if (!rid || !aid) return;
+  pruneRuntimeRoutingState();
+  const binding = { accountId: aid, account: runtimeAccountRef(account, aid), updatedAt: Date.now() };
+  responseAffinity.set(rid, binding);
+  return responseAffinityBindingDiagnostics(rid, binding);
+}
+
+function resolveAffinityBinding(previousResponseId) {
   const rid = String(previousResponseId || '').trim();
   if (!rid) return null;
   pruneRuntimeRoutingState();
-  return responseAffinity.get(rid)?.accountId || null;
+  return responseAffinity.get(rid) || null;
 }
 
 function parseRequestJson(body) {
@@ -542,9 +702,12 @@ function shouldTryNextAccount(status, bodyText = '') {
 
 async function sendWithAccountPool({ req, body, target, streamMode }) {
   const hint = requestRoutingHint(body);
-  const affinityAccountId = resolveAffinityAccount(hint.previousResponseId);
+  const affinityBinding = resolveAffinityBinding(hint.previousResponseId);
+  const affinityAccountId = affinityBinding?.accountId || null;
   const ids = pinPreferredAccount(await getProxyAccountIdsForRequest(), affinityAccountId);
+  const routingDiagnostics = createRoutingDiagnostics(hint, affinityBinding, ids);
   let lastResponse = null;
+  let lastResponseAccount = null;
   let lastError = null;
   let shortestCooldownMs = 0;
 
@@ -552,7 +715,16 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
     const cooldownMs = getModelCooldownWait(accountId, hint.modelKey);
     if (cooldownMs > 0) {
       shortestCooldownMs = shortestCooldownMs ? Math.min(shortestCooldownMs, cooldownMs) : cooldownMs;
-      lastError = new Error(`账号 ${accountId} 的模型 ${hint.modelKey || '<unknown>'} 仍在冷却，剩余约 ${Math.ceil(cooldownMs / 1000)} 秒`);
+      pushRoutingAttempt(routingDiagnostics, {
+        accountId,
+        model: hint.modelKey || null,
+        success: false,
+        statusCode: 'cooldown',
+        reason: 'model cooldown active',
+        cooldownMs,
+        skipped: true,
+      });
+      lastError = new Error(`account ${accountId} model cooldown active`);
       continue;
     }
 
@@ -561,22 +733,60 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
       const candidate = await getAccountById(accountId);
       const authMode = String(candidate.authMode || candidate.auth_mode || 'oauth').trim().toLowerCase();
       if (authMode === 'apikey' || candidate.openaiApiKey || candidate.openai_api_key || !candidate.tokens?.access_token) {
+        pushRoutingAttempt(routingDiagnostics, {
+          account: candidate,
+          accountId,
+          model: hint.modelKey || null,
+          success: false,
+          statusCode: 'skipped',
+          reason: 'account is not usable for Codex local access',
+          skipped: true,
+        });
         lastError = new Error(`account ${accountId} cannot be used by Codex local access`);
         continue;
       }
       account = await refreshAccountIfNeeded(candidate);
     } catch (err) {
+      pushRoutingAttempt(routingDiagnostics, {
+        accountId,
+        model: hint.modelKey || null,
+        success: false,
+        statusCode: 'account',
+        reason: safeErrorReason(err, 'account refresh failed'),
+      });
       lastError = err;
       continue;
     }
 
-    let upstream = await sendUpstream({ req, body, account, target, streamMode });
+    let upstream;
+    try {
+      upstream = await sendUpstream({ req, body, account, target, streamMode });
+    } catch (err) {
+      pushRoutingAttempt(routingDiagnostics, {
+        account,
+        model: hint.modelKey || null,
+        success: false,
+        statusCode: 'network',
+        reason: safeErrorReason(err, 'upstream connection failed'),
+        retryable: true,
+      });
+      lastError = err;
+      continue;
+    }
 
     if (upstream.status === 401) {
       try {
         account = await refreshAccountIfNeeded(account, true);
         upstream = await sendUpstream({ req, body, account, target, streamMode });
       } catch (err) {
+        pushRoutingAttempt(routingDiagnostics, {
+          account,
+          model: hint.modelKey || null,
+          success: false,
+          statusCode: 401,
+          reason: safeErrorReason(err, 'authorization refresh failed'),
+          retryable: true,
+        });
         lastError = err;
         continue;
       }
@@ -584,7 +794,18 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
 
     if (upstream.ok) {
       clearModelCooldown(account.id, hint.modelKey);
-      return { upstream, account, accountCount: ids.length };
+      pushRoutingAttempt(routingDiagnostics, {
+        account,
+        model: hint.modelKey || null,
+        success: true,
+        statusCode: upstream.status,
+      });
+      return {
+        upstream,
+        account,
+        accountCount: ids.length,
+        routingDiagnostics: finalizeRoutingDiagnostics(routingDiagnostics, upstream, account),
+      };
     }
 
     let bodyText = '';
@@ -599,30 +820,74 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
       shortestCooldownMs = shortestCooldownMs ? Math.min(shortestCooldownMs, retryAfterMs) : retryAfterMs;
     }
 
-    if (ids.length === 1) return { upstream, account, accountCount: ids.length };
+    const retryable = ids.length > 1 && shouldTryNextAccount(upstream.status, bodyText);
+    const reason = classifyUpstreamFailure(upstream.status, bodyText);
+    pushRoutingAttempt(routingDiagnostics, {
+      account,
+      model: hint.modelKey || null,
+      success: false,
+      statusCode: upstream.status,
+      reason,
+      retryable,
+      cooldownMs: retryAfterMs,
+    });
 
-    if (!shouldTryNextAccount(upstream.status, bodyText)) {
-      return { upstream, account, accountCount: ids.length };
+    if (ids.length === 1) {
+      return {
+        upstream,
+        account,
+        accountCount: ids.length,
+        routingDiagnostics: finalizeRoutingDiagnostics(routingDiagnostics, upstream, account),
+      };
+    }
+
+    if (!retryable) {
+      return {
+        upstream,
+        account,
+        accountCount: ids.length,
+        routingDiagnostics: finalizeRoutingDiagnostics(routingDiagnostics, upstream, account),
+      };
     }
 
     lastResponse = upstream;
-    lastError = new Error(`?? ${account.email || account.id} ???? ${upstream.status}`);
+    lastResponseAccount = account;
+    lastError = new Error(reason);
   }
 
-  if (lastResponse) return { upstream: lastResponse, account: null, accountCount: ids.length };
-  if (shortestCooldownMs > 0) {
+  if (lastResponse) {
     return {
-      upstream: new Response(JSON.stringify({
-        error: `所有可用账号暂时冷却中，最短约 ${Math.ceil(shortestCooldownMs / 1000)} 秒后可重试`,
-      }), {
-        status: 429,
-        headers: { 'content-type': 'application/json; charset=utf-8' },
-      }),
-      account: null,
+      upstream: lastResponse,
+      account: lastResponseAccount,
       accountCount: ids.length,
+      routingDiagnostics: finalizeRoutingDiagnostics(routingDiagnostics, lastResponse, lastResponseAccount),
     };
   }
-  throw lastError || new Error('???? Codex ???????????? API ????');
+  if (shortestCooldownMs > 0) {
+    const upstream = new Response(JSON.stringify({
+      error: `All available accounts are cooling down; retry in about ${Math.ceil(shortestCooldownMs / 1000)} seconds`,
+    }), {
+      status: 429,
+      headers: { 'content-type': 'application/json; charset=utf-8' },
+    });
+    return {
+      upstream,
+      account: null,
+      accountCount: ids.length,
+      routingDiagnostics: finalizeRoutingDiagnostics(routingDiagnostics, upstream, null),
+    };
+  }
+  if (!ids.length) {
+    pushRoutingAttempt(routingDiagnostics, {
+      success: false,
+      statusCode: 'pool_empty',
+      reason: 'no API service accounts configured',
+      skipped: true,
+    });
+  }
+  const err = lastError || new Error('No usable Codex account is available for API service');
+  err.routingDiagnostics = finalizeRoutingDiagnostics(routingDiagnostics, null, null);
+  throw err;
 }
 
 async function proxyCodexRequest(req, res, body) {
@@ -634,6 +899,8 @@ async function proxyCodexRequest(req, res, body) {
   let upstream = null;
   let capture = null;
   let finishLocalAccessRequest = null;
+  let routingDiagnostics = null;
+  let requestDiagnostics = null;
 
   try {
     if (chatMode) {
@@ -655,12 +922,18 @@ async function proxyCodexRequest(req, res, body) {
     const localAccessConfig = await loadLocalAccessConfig();
     const serviceTierRewrite = applyServiceTierMode(body, localAccessConfig.serviceTierMode);
     body = serviceTierRewrite.body;
-    const requestDiagnostics = safeRequestDiagnostics(req, body, target, {
+    requestDiagnostics = safeRequestDiagnostics(req, body, target, {
       bodyBytes: incomingBodyBytes,
       upstreamBodyBytes: bufferBytes(body),
     });
     if (serviceTierRewrite.rewrite) Object.assign(requestDiagnostics.body, serviceTierRewrite.rewrite);
-    ({ upstream, account } = await sendWithAccountPool({ req, body, target, streamMode: upstreamStreamMode }));
+    ({ upstream, account, routingDiagnostics } = await sendWithAccountPool({ req, body, target, streamMode: upstreamStreamMode }));
+    requestDiagnostics.upstream = {
+      statusCode: upstream?.status ?? null,
+      ok: Boolean(upstream?.ok),
+    };
+    requestDiagnostics.routing = routingDiagnostics;
+    requestDiagnostics.responseAffinity = routingDiagnostics?.responseAffinity || null;
     finishLocalAccessRequest = beginLocalAccessRequest(account, startedAt, {
       target,
       model: requestRoutingHint(body).modelKey,
@@ -697,7 +970,12 @@ async function proxyCodexRequest(req, res, body) {
           }
           capture = responseCapture.finish();
         }
-        if (account && capture?.responseId) bindResponseAffinity(capture.responseId, account.id);
+        if (account && capture?.responseId) {
+          requestDiagnostics.responseAffinity = {
+            ...(requestDiagnostics.responseAffinity || {}),
+            bound: bindResponseAffinity(capture.responseId, account),
+          };
+        }
       } finally {
         res.end();
       }
@@ -709,14 +987,21 @@ async function proxyCodexRequest(req, res, body) {
       success: Boolean(upstream?.ok),
       latencyMs: Date.now() - startedAt,
       usage: capture?.usage,
+      statusCode: upstream?.status ?? null,
+      failureReason: upstream?.ok ? null : routingDiagnostics?.final?.reason,
+      attempts: routingDiagnostics?.attempts,
     }).catch((err) => console.warn('[stats] record failed:', err?.message || err));
   } catch (err) {
+    if (!routingDiagnostics && err?.routingDiagnostics) routingDiagnostics = err.routingDiagnostics;
     await recordLocalAccessStats({
       accountId: account?.id,
       email: account?.email,
       success: false,
       latencyMs: Date.now() - startedAt,
       usage: capture?.usage,
+      statusCode: upstream?.status ?? null,
+      failureReason: routingDiagnostics?.final?.reason || safeErrorReason(err, 'gateway request failed'),
+      attempts: routingDiagnostics?.attempts,
     }).catch(() => {});
     throw err;
   } finally {

@@ -18,6 +18,7 @@ function emptyUsageStats() {
     totalTokens: 0,
     cachedTokens: 0,
     reasoningTokens: 0,
+    statusCodes: {},
   };
 }
 
@@ -47,6 +48,54 @@ function positiveInteger(value) {
   const number = Number(value || 0);
   if (!Number.isFinite(number) || number <= 0) return 0;
   return Math.round(number);
+}
+
+function normalizeStatusCode(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const number = Number(value);
+  if (Number.isFinite(number) && number > 0) return String(Math.round(number));
+  const text = String(value || '').trim().toLowerCase();
+  if (!text) return null;
+  return text.replace(/[^a-z0-9_-]/g, '_').slice(0, 40) || null;
+}
+
+function normalizeStatusCodes(value) {
+  const output = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return output;
+  for (const [key, count] of Object.entries(value)) {
+    const status = normalizeStatusCode(key);
+    const amount = positiveInteger(count);
+    if (status && amount) output[status] = amount;
+  }
+  return output;
+}
+
+function incrementStatusCode(target, statusCode) {
+  const status = normalizeStatusCode(statusCode);
+  if (!status) return;
+  target.statusCodes = normalizeStatusCodes(target.statusCodes);
+  target.statusCodes[status] = positiveInteger(target.statusCodes[status]) + 1;
+}
+
+function sanitizeFailureReason(value) {
+  const text = String(value || '').trim()
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/ig, 'Bearer [redacted]')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/ig, 'sk-[redacted]')
+    .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '[jwt-redacted]');
+  return text.slice(0, 160);
+}
+
+function normalizeFailure(value) {
+  if (!value || typeof value !== 'object') return null;
+  const reason = sanitizeFailureReason(value.reason || value.failureReason || value.failure_reason);
+  return {
+    timestamp: positiveInteger(value.timestamp || value.updatedAt || value.updated_at),
+    statusCode: normalizeStatusCode(value.statusCode || value.status_code),
+    reason: reason || null,
+    model: String(value.model || '').trim() || null,
+    cooldownMs: positiveInteger(value.cooldownMs || value.cooldown_ms),
+    skipped: value.skipped === true,
+  };
 }
 
 function normalizeUsage(usage = {}) {
@@ -145,7 +194,7 @@ function applyUsageStats(target, success, latencyMs, usage) {
 
 function upsertAccountUsageStats(accounts, accountId, email, success, latencyMs, usage, updatedAt) {
   const id = String(accountId || '').trim();
-  if (!id) return;
+  if (!id) return null;
   const normalizedEmail = String(email || '').trim();
   let item = accounts.find((entry) => entry.accountId === id);
   if (!item) {
@@ -153,6 +202,7 @@ function upsertAccountUsageStats(accounts, accountId, email, success, latencyMs,
       accountId: id,
       email: normalizedEmail,
       usage: emptyUsageStats(),
+      recentFailure: null,
       updatedAt,
     };
     accounts.push(item);
@@ -160,6 +210,71 @@ function upsertAccountUsageStats(accounts, accountId, email, success, latencyMs,
   if (normalizedEmail) item.email = normalizedEmail;
   item.updatedAt = updatedAt;
   applyUsageStats(item.usage, success, latencyMs, usage);
+  return item;
+}
+
+function upsertAccountDiagnosticStats(accounts, accountId, email, updatedAt) {
+  const id = String(accountId || '').trim();
+  if (!id) return null;
+  const normalizedEmail = String(email || '').trim();
+  let item = accounts.find((entry) => entry.accountId === id);
+  if (!item) {
+    item = {
+      accountId: id,
+      email: normalizedEmail,
+      usage: emptyUsageStats(),
+      recentFailure: null,
+      updatedAt,
+    };
+    accounts.push(item);
+  }
+  if (normalizedEmail) item.email = normalizedEmail;
+  item.updatedAt = Math.max(positiveInteger(item.updatedAt), positiveInteger(updatedAt));
+  return item;
+}
+
+function normalizeAttempt(value = {}, fallback = {}) {
+  const account = value.account && typeof value.account === 'object' ? value.account : {};
+  const reason = sanitizeFailureReason(value.reason || value.failureReason || value.failure_reason || fallback.failureReason);
+  return {
+    timestamp: positiveInteger(value.timestamp || fallback.timestamp),
+    accountId: String(value.accountId || value.account_id || account.id || fallback.accountId || '').trim(),
+    email: String(value.email || account.email || fallback.email || '').trim(),
+    success: value.success === true,
+    statusCode: normalizeStatusCode(value.statusCode ?? value.status_code ?? fallback.statusCode),
+    reason: reason || null,
+    model: String(value.model || fallback.model || '').trim() || null,
+    cooldownMs: positiveInteger(value.cooldownMs || value.cooldown_ms),
+    skipped: value.skipped === true,
+    recovered: value.recovered === true,
+  };
+}
+
+function normalizeAttempts(attempts, fallback = {}) {
+  const raw = Array.isArray(attempts) && attempts.length ? attempts : [fallback];
+  return raw
+    .slice(0, 12)
+    .map((item) => normalizeAttempt(item, fallback))
+    .filter((item) => item.statusCode || item.accountId || item.reason);
+}
+
+function applyAttemptDiagnostics(totals, accounts, attempts, updatedAt) {
+  for (const attempt of attempts) {
+    incrementStatusCode(totals, attempt.statusCode);
+    const item = upsertAccountDiagnosticStats(accounts, attempt.accountId, attempt.email, updatedAt);
+    if (!item) continue;
+    incrementStatusCode(item.usage, attempt.statusCode);
+    if (attempt.success !== true && attempt.recovered !== true) {
+      item.recentFailure = normalizeFailure({
+        timestamp: attempt.timestamp || updatedAt,
+        statusCode: attempt.statusCode,
+        reason: attempt.reason,
+        model: attempt.model,
+        cooldownMs: attempt.cooldownMs,
+        skipped: attempt.skipped,
+      });
+    }
+  }
 }
 
 function sortAccountStats(accounts = []) {
@@ -182,6 +297,15 @@ function applyEventToWindow(window, event) {
     usage,
     event.timestamp,
   );
+  applyAttemptDiagnostics(window.totals, window.accounts, normalizeAttempts(event.attempts, {
+    timestamp: event.timestamp,
+    accountId: event.accountId,
+    email: event.email,
+    success: Boolean(event.success),
+    statusCode: event.statusCode,
+    failureReason: event.failureReason,
+    model: event.model,
+  }), event.timestamp);
   window.updatedAt = Math.max(positiveInteger(window.updatedAt), positiveInteger(event.timestamp));
 }
 
@@ -223,11 +347,17 @@ function normalizeStats(raw) {
   stats.since = positiveInteger(stats.since) || now;
   stats.updatedAt = positiveInteger(stats.updatedAt) || stats.since;
   stats.totals = { ...emptyUsageStats(), ...(stats.totals || {}) };
+  stats.totals.statusCodes = normalizeStatusCodes(stats.totals.statusCodes);
   stats.accounts = Array.isArray(stats.accounts) ? stats.accounts : [];
   stats.accounts = stats.accounts.map((item) => ({
     accountId: String(item.accountId || item.account_id || '').trim(),
     email: String(item.email || '').trim(),
-    usage: { ...emptyUsageStats(), ...(item.usage || {}) },
+    usage: {
+      ...emptyUsageStats(),
+      ...(item.usage || {}),
+      statusCodes: normalizeStatusCodes(item.usage?.statusCodes || item.usage?.status_codes),
+    },
+    recentFailure: normalizeFailure(item.recentFailure || item.recent_failure),
     updatedAt: positiveInteger(item.updatedAt || item.updated_at),
   })).filter((item) => item.accountId);
   sortAccountStats(stats.accounts);
@@ -245,19 +375,40 @@ export async function clearLocalAccessStats() {
   return stats;
 }
 
-export async function recordLocalAccessStats({ accountId, email, success, latencyMs, usage } = {}) {
+export async function recordLocalAccessStats({
+  accountId,
+  email,
+  success,
+  latencyMs,
+  usage,
+  statusCode,
+  failureReason,
+  attempts,
+} = {}) {
   const stats = await loadLocalAccessStats();
   const now = nowMs();
   const normalizedUsage = usage ? normalizeUsage(usage) : null;
+  const normalizedAttempts = normalizeAttempts(attempts, {
+    timestamp: now,
+    accountId,
+    email,
+    success: Boolean(success),
+    statusCode,
+    failureReason,
+  });
   stats.updatedAt = now;
   applyUsageStats(stats.totals, Boolean(success), latencyMs, normalizedUsage);
   upsertAccountUsageStats(stats.accounts, accountId, email, Boolean(success), latencyMs, normalizedUsage, now);
+  applyAttemptDiagnostics(stats.totals, stats.accounts, normalizedAttempts, now);
   stats.events.push({
     timestamp: now,
     accountId: String(accountId || '').trim(),
     email: String(email || '').trim(),
     success: Boolean(success),
     latencyMs: positiveInteger(latencyMs),
+    statusCode: normalizeStatusCode(statusCode),
+    failureReason: Boolean(success) ? null : sanitizeFailureReason(failureReason),
+    attempts: normalizedAttempts,
     inputTokens: normalizedUsage?.inputTokens || 0,
     outputTokens: normalizedUsage?.outputTokens || 0,
     totalTokens: normalizedUsage?.totalTokens || 0,

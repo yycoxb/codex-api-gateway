@@ -1264,6 +1264,10 @@ export function renderAdminHtml() {
       line-height: 1.45;
     }
 
+    .diagnostic-line.warn {
+      color: #b45309;
+    }
+
     .local-access-member-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto auto auto;
@@ -1541,6 +1545,16 @@ export function renderAdminHtml() {
       gap: 14px;
     }
 
+    .stats-status-list {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
     .stats-metric {
       min-height: 112px;
       padding: 18px;
@@ -1657,6 +1671,12 @@ export function renderAdminHtml() {
       font-size: 12px;
       font-weight: 900;
       white-space: nowrap;
+    }
+
+    .stats-failure {
+      color: #b45309;
+      font-size: 11px;
+      font-weight: 850;
     }
 
     .modal-toolbar {
@@ -2444,6 +2464,11 @@ export function renderAdminHtml() {
     .stats-metric.teal .stats-metric-label { color: #9ff0cf; }
     .stats-metric.purple .stats-metric-label { color: #c4b5fd; }
 
+    .stats-failure,
+    .diagnostic-line.warn {
+      color: #fbbf24;
+    }
+
     .current-tag {
       color: #171207;
       background: linear-gradient(135deg, #f5d06f, #d4af37);
@@ -3021,6 +3046,7 @@ export function renderAdminHtml() {
               <div class="stats-metric-sub" id="statsLatencySub">成功率 0%</div>
             </div>
           </div>
+          <div class="stats-status-list" id="statsStatusCodes">上游状态码：暂无</div>
         </section>
 
         <section class="stats-section">
@@ -3306,6 +3332,58 @@ function latencyText(ms) {
   if (!Number.isFinite(n) || n <= 0) return '0s';
   if (n < 1000) return Math.round(n) + 'ms';
   return (n / 1000).toFixed(2).replace(/0$/, '').replace(/\.0$/, '') + 's';
+}
+
+function shortDurationText(ms) {
+  const n = Number(ms || 0);
+  if (!Number.isFinite(n) || n <= 0) return '0s';
+  if (n < 1000) return Math.ceil(n) + 'ms';
+  if (n < 60000) return Math.ceil(n / 1000) + 's';
+  if (n < 3600000) return Math.ceil(n / 60000) + 'm';
+  if (n < 86400000) return Math.ceil(n / 3600000) + 'h';
+  return Math.ceil(n / 86400000) + 'd';
+}
+
+function statusCodeLabel(status) {
+  const value = String(status || '').trim();
+  if (!value) return '-';
+  if (/^\d+$/.test(value)) return 'HTTP ' + value;
+  if (value === 'network') return '网络';
+  if (value === 'cooldown') return '冷却';
+  if (value === 'account') return '账号';
+  if (value === 'skipped') return '跳过';
+  if (value === 'pool_empty') return '无账号';
+  return value;
+}
+
+function statusCodeEntries(statusCodes) {
+  return Object.entries(statusCodes || {})
+    .map(function(entry) { return { status: entry[0], count: Number(entry[1] || 0) }; })
+    .filter(function(item) { return item.status && item.count > 0; })
+    .sort(function(a, b) {
+      const an = Number(a.status);
+      const bn = Number(b.status);
+      if (Number.isFinite(an) && Number.isFinite(bn)) return an - bn;
+      if (Number.isFinite(an)) return -1;
+      if (Number.isFinite(bn)) return 1;
+      return a.status.localeCompare(b.status);
+    });
+}
+
+function statusCodePills(statusCodes, limit) {
+  const entries = statusCodeEntries(statusCodes);
+  const visible = entries.slice(0, limit || 8);
+  if (!visible.length) return '<span class="stats-pill">暂无</span>';
+  return visible.map(function(item) {
+    return '<span class="stats-pill">' + escapeHtml(statusCodeLabel(item.status)) + ' × ' + compactNumber(item.count) + '</span>';
+  }).join('') + (entries.length > visible.length ? '<span class="stats-pill">+' + (entries.length - visible.length) + '</span>' : '');
+}
+
+function accountDisplayNameById(accountId, fallbackEmail) {
+  const id = String(accountId || '').trim();
+  const accounts = (state.data && Array.isArray(state.data.accounts)) ? state.data.accounts : [];
+  const found = accounts.find(function(account) { return String(account.id || '') === id; });
+  return maskEmail((found && found.email) || fallbackEmail || id || '-');
 }
 
 function strategyLabel(value) {
@@ -3608,6 +3686,48 @@ function renderLocalAccessMembers() {
   }).join('') + (accounts.length > 4 ? '<div class="api-pool-hint">还有 ' + (accounts.length - 4) + ' 个账号，点击“添加账号”查看全部。</div>' : '');
 }
 
+function fallbackChainText(routing) {
+  const attempts = Array.isArray(routing && routing.attempts) ? routing.attempts : [];
+  if (!attempts.length) return '';
+  return attempts.slice(0, 6).map(function(attempt) {
+    const account = attempt.account || {};
+    const label = accountDisplayNameById(attempt.accountId || account.id, attempt.email || account.email);
+    const status = statusCodeLabel(attempt.statusCode);
+    const suffix = attempt.success ? '成功' : (attempt.skipped ? '跳过' : '失败');
+    const cooldown = attempt.cooldownMs ? ', 冷却 ' + shortDurationText(attempt.cooldownMs) : '';
+    const reason = attempt.reason ? ', ' + attempt.reason : '';
+    return label + '(' + status + ', ' + suffix + cooldown + reason + ')';
+  }).join(' → ');
+}
+
+function responseAffinityText(info) {
+  if (!info) return '';
+  const parts = [];
+  if (info.requested) {
+    const previous = info.previousResponseId ? ('previous=' + info.previousResponseId) : 'previous_response_id';
+    let status = info.matched ? ' 命中' : ' 未命中';
+    if (info.matched && info.inPool === false) status += '，但账号不在池内';
+    parts.push(previous + status);
+  }
+  if (info.bound) {
+    const bound = info.bound;
+    const account = bound.account || {};
+    const label = accountDisplayNameById(bound.accountId || account.id, account.email);
+    const ttl = bound.expiresInMs ? ', TTL ' + shortDurationText(bound.expiresInMs) : '';
+    parts.push('绑定 ' + (bound.responseId || 'response_id') + ' → ' + label + ttl);
+  }
+  return parts.join(' · ');
+}
+
+function runtimeCooldownHtml(runtime) {
+  const cooldowns = Array.isArray(runtime && runtime.cooldowns) ? runtime.cooldowns : [];
+  if (!cooldowns.length) return '';
+  const text = cooldowns.slice(0, 4).map(function(item) {
+    return accountDisplayNameById(item.accountId) + (item.model ? ' / ' + item.model : '') + ' ' + shortDurationText(item.remainingMs);
+  }).join(' · ');
+  return '<div class="diagnostic-line warn">冷却剩余：' + escapeHtml(text) + '</div>';
+}
+
 function requestDiagnosticsHtml(request) {
   if (!request) return '';
   const body = request.body || {};
@@ -3620,6 +3740,7 @@ function requestDiagnosticsHtml(request) {
   if (bodySize) parts.push('请求体=' + bodySize);
   if (upstreamBodySize && upstreamBodySize !== bodySize) parts.push('转发=' + upstreamBodySize);
   if (contentLengthSize && contentLengthSize !== bodySize) parts.push('Content-Length=' + contentLengthSize);
+  if (request.upstream && request.upstream.statusCode != null) parts.push('upstream=' + statusCodeLabel(request.upstream.statusCode));
   Object.keys(body).slice(0, 10).forEach(function(key) {
     const value = String(body[key]);
     if (!value || value === '[object]') return;
@@ -3630,6 +3751,10 @@ function requestDiagnosticsHtml(request) {
     if (!value || value === '[object]') return;
     parts.push('header.' + key + '=' + value);
   });
+  const fallback = fallbackChainText(request.routing);
+  const affinity = responseAffinityText(request.responseAffinity);
+  if (fallback) parts.push('fallback=' + fallback);
+  if (affinity) parts.push('response_affinity=' + affinity);
   if (!parts.length) return '';
   return '<details class="request-diagnostics"' + (state.runtimeDiagnosticsOpen ? ' open' : '') + '>' +
     '<summary>诊断详情</summary>' +
@@ -3696,7 +3821,7 @@ function renderLocalAccessRuntime() {
     const runningText = started ? (' · 已运行 ' + durationText(Date.now() - started)) : '';
     const tags = requestSummaryTags(runtime.currentRequest);
     const tagText = tags.length ? ' · ' + escapeHtml(tags.join(' · ')) : '';
-    box.innerHTML = '<div class="runtime-main">API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + tagText + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + '</div>' + requestDiagnosticsHtml(runtime.currentRequest);
+    box.innerHTML = '<div class="runtime-main">API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + tagText + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + '</div>' + requestDiagnosticsHtml(runtime.currentRequest) + runtimeCooldownHtml(runtime);
     box.classList.add('show');
     bindRuntimeDiagnosticsToggle(box);
     return;
@@ -3708,13 +3833,19 @@ function renderLocalAccessRuntime() {
     const recentActive = !!recentAccount;
     const prefix = recentActive ? 'API 刚刚使用：' : '最近 API 使用：';
     const tail = recentActive ? ' · 保持高亮中' : (' · ' + escapeHtml(finished));
-    box.innerHTML = '<div class="runtime-main">' + prefix + '<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + tail + '</div>' + requestDiagnosticsHtml(runtime.lastRequest);
+    box.innerHTML = '<div class="runtime-main">' + prefix + '<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + tail + '</div>' + requestDiagnosticsHtml(runtime.lastRequest) + runtimeCooldownHtml(runtime);
     box.classList.add('show');
     bindRuntimeDiagnosticsToggle(box);
     return;
   }
-  box.textContent = '';
-  box.classList.remove('show');
+  const cooldownHtml = runtimeCooldownHtml(runtime);
+  if (cooldownHtml) {
+    box.innerHTML = cooldownHtml;
+    box.classList.add('show');
+  } else {
+    box.textContent = '';
+    box.classList.remove('show');
+  }
 }
 
 function applyApiRuntimeState(runtime) {
@@ -3824,6 +3955,7 @@ function renderApiStatsPanel() {
   if ($('statsCacheSub')) $('statsCacheSub').textContent = '缓存 ' + compactNumber(totals.cachedTokens || 0) + ' / 思考 ' + compactNumber(totals.reasoningTokens || 0);
   if ($('statsAvgLatency')) $('statsAvgLatency').textContent = latencyText(avgLatency);
   if ($('statsLatencySub')) $('statsLatencySub').textContent = '成功率 ' + successRate + '%';
+  if ($('statsStatusCodes')) $('statsStatusCodes').innerHTML = '<span>上游状态码：</span>' + statusCodePills(totals.statusCodes, 10);
   if ($('statsBaseUrl')) $('statsBaseUrl').textContent = baseUrl || '-';
   if ($('statsApiKey')) $('statsApiKey').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('statsPort')) $('statsPort').textContent = port;
@@ -3842,7 +3974,9 @@ function renderApiStatsPanel() {
     const email = String(account.email || '').trim().toLowerCase();
     if (email) byEmail.set(email, account);
   });
-  const rows = (win.accounts || []).filter(function(item) { return item && item.usage && item.usage.requestCount; });
+  const rows = (win.accounts || []).filter(function(item) {
+    return item && item.usage && (item.usage.requestCount || statusCodeEntries(item.usage.statusCodes).length || item.recentFailure);
+  });
   if (!rows.length) {
     accountList.innerHTML = '<div class="empty-state">暂无 API 服务请求统计。发起一次 /v1 请求后这里会显示。</div>';
     return;
@@ -3854,12 +3988,18 @@ function renderApiStatsPanel() {
     const plan = planLabel(account.planType);
     const quota = account.quota || {};
     const quotaText = quota.weekly_percentage == null ? '' : '<span class="stats-pill">Weekly ' + escapeHtml(quota.weekly_percentage + '%') + '</span>';
+    const failure = item.recentFailure || null;
+    const failureText = failure && failure.reason
+      ? '<div class="stats-failure">最近失败：' + escapeHtml(statusCodeLabel(failure.statusCode)) + ' · ' + escapeHtml(failure.reason) + (failure.cooldownMs ? ' · 冷却 ' + escapeHtml(shortDurationText(failure.cooldownMs)) : '') + '</div>'
+      : '';
+    const statusPills = statusCodeEntries(usage.statusCodes).length ? statusCodePills(usage.statusCodes, 4) : '';
     return '<div class="stats-account-row">' +
-      '<div class="stats-account-main" title="' + escapeHtml(email) + '">' + escapeHtml(maskEmail(email)) + '</div>' +
+      '<div class="stats-account-main" title="' + escapeHtml(email) + '">' + escapeHtml(maskEmail(email)) + failureText + '</div>' +
       '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
       quotaText +
       '<span class="stats-pill">成功 ' + compactNumber(usage.successCount || 0) + ' / 失败 ' + compactNumber(usage.failureCount || 0) + '</span>' +
       '<span class="stats-pill">' + compactNumber(usage.totalTokens || 0) + ' tokens</span>' +
+      statusPills +
     '</div>';
   }).join('');
 }
