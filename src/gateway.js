@@ -23,7 +23,7 @@ import {
   writeChatCompletionsResponseFromResponses,
   writeChatCompletionsStreamFromResponses,
 } from './chat-completions.js';
-import { dataPayloadFromSseFrame, splitSseFrames } from './sse.js';
+import { parseSseFrame, splitSseFrames } from './sse.js';
 import { renderAdminHtml } from './admin-ui.js';
 import { loadWakeupHistory, loadWakeupSchedule, runWakeup, runWakeupScheduleNow, saveWakeupSchedule } from './wakeup.js';
 import { loadQuotaRefreshSchedule, refreshAccountQuota, refreshAccountQuotas, runQuotaRefreshNow, saveQuotaRefreshSchedule } from './quota.js';
@@ -347,10 +347,11 @@ function createResponseCapture(streamMode) {
       for (const frame of parsed.frames) this.processFrame(frame);
     },
     processFrame(frame) {
-      const data = dataPayloadFromSseFrame(frame);
+      const { event, data } = parseSseFrame(frame);
       if (!data || data === '[DONE]') return;
       try {
         const value = JSON.parse(data);
+        if (event && value && typeof value === 'object' && !value.type) value.type = event;
         this.responseId = this.responseId || extractResponseIdFromValue(value);
         this.usage = extractUsageCapture(value) || this.usage;
       } catch {}

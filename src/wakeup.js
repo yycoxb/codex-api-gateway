@@ -1,6 +1,6 @@
 import { DEFAULT_CODEX_ORIGINATOR, DEFAULT_CODEX_USER_AGENT, UPSTREAM_BASE, WAKEUP_HISTORY_PATH, WAKEUP_SCHEDULE_PATH } from './constants.js';
 import { getAccountById, listAccounts, refreshAccountIfNeeded } from './account.js';
-import { dataPayloadFromSseFrame, splitSseFrames } from './sse.js';
+import { parseSseFrame, splitSseFrames } from './sse.js';
 import { readJson, writeJson } from './storage.js';
 import { nowMs } from './utils.js';
 
@@ -50,6 +50,21 @@ function extractUsage(response) {
   };
 }
 
+function sseFrameInfo(frame) {
+  const parsed = parseSseFrame(frame);
+  if (parsed.data) return parsed;
+  const trimmed = String(frame || '').trim();
+  return { event: parsed.event, data: trimmed || null };
+}
+
+function responseEventType(event, sseEventName) {
+  return String(event?.type || sseEventName || '').trim();
+}
+
+function isResponseCompletionEvent(type) {
+  return type === 'response.completed' || type === 'response.done';
+}
+
 async function consumeWakeupStream(upstream) {
   let buffer = '';
   let outputText = '';
@@ -64,16 +79,18 @@ async function consumeWakeupStream(upstream) {
     buffer = parsed.rest;
 
     for (const frame of parsed.frames) {
-      const data = dataPayloadFromSseFrame(frame);
+      const sse = sseFrameInfo(frame);
+      const data = sse.data;
       if (!data || data === '[DONE]') continue;
       let event;
       try { event = JSON.parse(data); } catch { continue; }
-      if (event.type === 'response.created' && event.response) {
+      const type = responseEventType(event, sse.event);
+      if (type === 'response.created' && event.response) {
         responseId = event.response.id || responseId;
-      } else if (event.type === 'response.output_text.delta') {
+      } else if (type === 'response.output_text.delta') {
         outputText += event.delta || '';
-      } else if (event.type === 'response.completed') {
-        const response = event.response || {};
+      } else if (isResponseCompletionEvent(type)) {
+        const response = event.response || event || {};
         responseId = response.id || responseId;
         usage = extractUsage(response);
       }

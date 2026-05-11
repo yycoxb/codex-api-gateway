@@ -24,12 +24,35 @@
 }
 
 export function dataPayloadFromSseFrame(frame) {
-  const dataLines = frame
-    .split(/\r?\n/)
-    .filter((line) => line.trim().startsWith('data:'))
-    .map((line) => line.replace(/^data:\s*/, ''));
+  return parseSseFrame(frame).data;
+}
 
-  if (!dataLines.length) return null;
+export function parseSseFrame(frame) {
+  let event = null;
+  const dataLines = [];
+
+  for (const rawLine of String(frame || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith(':')) continue;
+
+    if (line.startsWith('event:')) {
+      const value = line.replace(/^event:\s*/, '').trim();
+      if (value) event = value;
+      continue;
+    }
+
+    if (line.startsWith('data:')) {
+      dataLines.push(line.replace(/^data:\s*/, ''));
+    }
+  }
+
   const data = dataLines.join('\n').trim();
-  return data || null;
+  return {
+    event,
+    data: data || null,
+  };
+}
+
+export function eventNameFromSseFrame(frame) {
+  return parseSseFrame(frame).event;
 }

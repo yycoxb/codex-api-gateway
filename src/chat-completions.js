@@ -1,7 +1,7 @@
 ﻿import crypto from 'node:crypto';
 import { DEFAULT_MODELS } from './constants.js';
 import { nowSec } from './utils.js';
-import { dataPayloadFromSseFrame, splitSseFrames } from './sse.js';
+import { parseSseFrame, splitSseFrames } from './sse.js';
 
 export function isChatCompletionsPath(reqUrl) {
   const u = new URL(reqUrl, 'http://localhost');
@@ -337,11 +337,19 @@ function chatCompletionChunk({ id, model, created, delta = {}, finishReason = nu
   };
 }
 
-function sseFramePayload(frame) {
-  const data = dataPayloadFromSseFrame(frame);
-  if (data) return data;
+function sseFrameInfo(frame) {
+  const parsed = parseSseFrame(frame);
+  if (parsed.data) return parsed;
   const trimmed = String(frame || '').trim();
-  return trimmed || null;
+  return { event: parsed.event, data: trimmed || null };
+}
+
+function responseEventType(event, sseEventName) {
+  return String(event?.type || sseEventName || '').trim();
+}
+
+function isResponseCompletionEvent(type) {
+  return type === 'response.completed' || type === 'response.done';
 }
 
 function restoreToolName(name, reverseToolNameMap) {
@@ -378,11 +386,12 @@ export async function writeChatCompletionsStreamFromResponses(upstream, res, con
     buffer = parsed.rest;
 
     for (const frame of parsed.frames) {
-      const payload = sseFramePayload(frame);
+      const sse = sseFrameInfo(frame);
+      const payload = sse.data;
       if (!payload || payload === '[DONE]') continue;
       let event;
       try { event = JSON.parse(payload); } catch { continue; }
-      const type = event.type || '';
+      const type = responseEventType(event, sse.event);
 
       if (type === 'response.created' && event.response) {
         state.id = event.response.id || state.id;
@@ -446,8 +455,8 @@ export async function writeChatCompletionsStreamFromResponses(upstream, res, con
             },
           }],
         }));
-      } else if (type === 'response.completed') {
-        const response = event.response || {};
+      } else if (isResponseCompletionEvent(type)) {
+        const response = event.response || event || {};
         state.id = response.id || state.id;
         state.model = response.model || state.model;
         state.created = response.created_at || state.created;
@@ -493,17 +502,19 @@ async function collectResponsesPayloadFromUpstream(upstream) {
   const parsed = splitSseFrames(rest);
   const frames = parsed.rest.trim() ? [...parsed.frames, parsed.rest] : parsed.frames;
   for (const frame of frames) {
-    const payload = sseFramePayload(frame);
+    const sse = sseFrameInfo(frame);
+    const payload = sse.data;
     if (!payload || payload === '[DONE]') continue;
     let event;
     try { event = JSON.parse(payload); } catch { continue; }
-    if (event.type === 'response.output_text.delta') {
+    const type = responseEventType(event, sse.event);
+    if (type === 'response.output_text.delta') {
       outputText += event.delta || '';
-    } else if (event.type === 'response.output_text.done' && !outputText) {
+    } else if (type === 'response.output_text.done' && !outputText) {
       outputText += event.text || '';
-    } else if (event.type === 'response.output_item.done' && event.item) {
+    } else if (type === 'response.output_item.done' && event.item) {
       outputItems.push(event.item);
-    } else if (event.type === 'response.completed') {
+    } else if (isResponseCompletionEvent(type)) {
       completedResponse = event.response || event;
     }
   }
