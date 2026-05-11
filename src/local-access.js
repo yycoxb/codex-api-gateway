@@ -16,6 +16,7 @@ const DEFAULT_LOCAL_ACCESS = {
 
 const STRATEGIES = new Set([
   'auto',
+  'manual',
   'round_robin',
   'quota_high_first',
   'quota_low_first',
@@ -48,6 +49,7 @@ function normalizeAccountIds(accountIds, validIds) {
 
 function normalizeRoutingStrategy(value) {
   const raw = String(value || DEFAULT_LOCAL_ACCESS.routingStrategy).trim().toLowerCase();
+  if (raw === 'ordered' || raw === 'priority' || raw === 'manual_first') return 'manual';
   return STRATEGIES.has(raw) ? raw : DEFAULT_LOCAL_ACCESS.routingStrategy;
 }
 
@@ -250,13 +252,15 @@ export function orderAccountIdsForRequest(ids, strategy = 'auto', accounts = [])
   const list = normalizeAccountIds(ids);
   if (list.length <= 1) return list;
 
+  const normalizedStrategy = normalizeRoutingStrategy(strategy);
+  if (normalizedStrategy === 'manual') return list;
+
   const start = roundRobinCursor++ % list.length;
   const ordered = [];
   for (let offset = 0; offset < list.length; offset += 1) {
     ordered.push(list[(start + offset) % list.length]);
   }
 
-  const normalizedStrategy = normalizeRoutingStrategy(strategy);
   if (normalizedStrategy === 'round_robin') return ordered;
 
   const byId = new Map(accounts.map((account) => [account.id, account]));

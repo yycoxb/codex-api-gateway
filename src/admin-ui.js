@@ -1084,7 +1084,7 @@ export function renderAdminHtml() {
 
     .api-pool-row {
       display: grid;
-      grid-template-columns: auto minmax(0, 1fr) auto;
+      grid-template-columns: auto minmax(0, 1fr) auto auto;
       align-items: center;
       gap: 10px;
       padding: 11px 12px;
@@ -1125,6 +1125,55 @@ export function renderAdminHtml() {
       white-space: nowrap;
       color: var(--text-secondary);
       font-size: 12px;
+    }
+
+    .api-pool-priority {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 6px;
+      min-width: 0;
+    }
+
+    .api-priority-badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 0 9px;
+      border: 1px solid rgba(245, 208, 111, .32);
+      border-radius: var(--radius-full);
+      background: rgba(212, 175, 55, .12);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .api-priority-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .api-priority-btn {
+      min-width: 28px;
+      min-height: 28px;
+      padding: 0 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 950;
+      line-height: 1;
+    }
+
+    .api-priority-btn.icon-only {
+      width: 28px;
+      padding: 0;
+    }
+
+    .api-priority-btn:disabled {
+      opacity: .38;
+      cursor: not-allowed;
+      transform: none;
     }
 
     .api-pool-actions {
@@ -2569,6 +2618,8 @@ export function renderAdminHtml() {
       .stats-grid,
       .stats-config-grid { grid-template-columns: 1fr; }
       .stats-account-row { grid-template-columns: 1fr; align-items: stretch; }
+      .api-pool-row { grid-template-columns: auto minmax(0, 1fr) auto; }
+      .api-pool-priority { grid-column: 2 / -1; justify-content: flex-start; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -2911,6 +2962,7 @@ export function renderAdminHtml() {
           <label class="modal-toggle"><input type="checkbox" id="apiRestrictFreeAccounts" checked /> 限制 Free 账号使用</label>
           <span class="selected-pill"><b id="apiModalSelectedCount">0</b> 已选</span>
         </div>
+        <div class="api-pool-hint">已选账号按列表顺序优先使用：第 1 个先试；失败、限额或冷却时再尝试下一个。</div>
         <div class="api-pool-list" id="apiPoolModalList"></div>
         <div class="api-pool-hint" id="apiPoolHint">这里的选择只影响 API 服务账号池；不会切换 Codex App。</div>
       </div>
@@ -3258,6 +3310,7 @@ function latencyText(ms) {
 
 function strategyLabel(value) {
   switch (String(value || 'auto')) {
+    case 'manual': return '手动优先';
     case 'expiry_soon_first': return '快到期优先';
     case 'expiry_late_first': return '晚到期优先';
     case 'quota_high_first': return '高额度优先';
@@ -3454,10 +3507,11 @@ function selectedAccountIds() {
 }
 
 function selectedApiAccountIds() {
-  const selected = state.apiAccountIds || new Set();
-  return sortedAccounts().map(function(account) { return account.id; }).filter(function(id) {
-    return selected.has(id);
-  });
+  const valid = new Set(allAccountIds());
+  const localIds = state.data && state.data.localAccess && Array.isArray(state.data.localAccess.accountIds)
+    ? state.data.localAccess.accountIds
+    : Array.from(state.apiAccountIds || []);
+  return localIds.filter(function(id) { return valid.has(id); });
 }
 
 function isApiKeyAccount(account) {
@@ -3494,14 +3548,40 @@ function syncApiSelectionControls() {
   if ($('apiRestrictFreeAccounts')) $('apiRestrictFreeAccounts').checked = !!state.apiRestrictFreeAccounts;
   if ($('apiPoolHint')) {
     const savedCount = selectedApiAccountIds().length;
+    const modalIds = selectedApiModalAccountIds();
+    const byId = apiAccountById();
+    const first = byId.get((state.apiModalOpen ? modalIds : selectedApiAccountIds())[0]);
     const active = state.data && state.data.codexApp && state.data.codexApp.apiService && state.data.codexApp.apiService.active;
-    $('apiPoolHint').textContent = (active ? '已接入' : '未接入') + ' · 已保存 ' + savedCount + ' 个账号';
+    const prefix = state.apiModalOpen
+      ? ('保存后按当前顺序使用 · 优先：' + (first ? maskEmail(first.email) : '-'))
+      : ((active ? '已接入' : '未接入') + ' · 已保存 ' + savedCount + ' 个账号');
+    $('apiPoolHint').textContent = prefix + ' · 策略：手动优先';
   }
 }
 
 function selectedApiModalAccountIds() {
   const valid = new Set(allAccountIds());
   return Array.from(state.apiModalIds).filter(function(id) { return valid.has(id); });
+}
+
+function moveApiModalPriority(accountId, action) {
+  const ids = selectedApiModalAccountIds();
+  const index = ids.indexOf(accountId);
+  if (index < 0) return;
+  const nextIds = ids.slice();
+  if (action === 'top') {
+    nextIds.splice(index, 1);
+    nextIds.unshift(accountId);
+  } else {
+    const delta = action === 'down' ? 1 : -1;
+    const next = index + delta;
+    if (next < 0 || next >= nextIds.length) return;
+    const swap = nextIds[index];
+    nextIds[index] = nextIds[next];
+    nextIds[next] = swap;
+  }
+  state.apiModalIds = new Set(nextIds);
+  renderApiPoolAccounts();
 }
 
 function renderLocalAccessMembers() {
@@ -3662,13 +3742,19 @@ function renderApiPoolAccounts() {
   const box = $('apiPoolModalList');
   if (!box || !state.data) return;
   const query = String(state.apiPoolQuery || '').trim().toLowerCase();
-  const accounts = sortedAccounts().filter(function(account) {
+  const baseAccounts = sortedAccounts().filter(function(account) {
     if (isApiKeyAccount(account)) return false;
     if (!query) return true;
     return String(account.email || '').toLowerCase().includes(query)
       || String(account.accountId || '').toLowerCase().includes(query)
       || String(account.userId || '').toLowerCase().includes(query);
   });
+  const byId = new Map(baseAccounts.map(function(account) { return [account.id, account]; }));
+  const modalIds = selectedApiModalAccountIds();
+  const modalIndex = new Map(modalIds.map(function(id, index) { return [id, index]; }));
+  const selectedAccounts = modalIds.map(function(id) { return byId.get(id); }).filter(Boolean);
+  const unselectedAccounts = baseAccounts.filter(function(account) { return !state.apiModalIds.has(account.id); });
+  const accounts = selectedAccounts.concat(unselectedAccounts);
   if (!accounts.length) {
     box.innerHTML = '<div class="empty-state">暂无可加入的 OAuth 账号。</div>';
     syncApiSelectionControls();
@@ -3679,12 +3765,24 @@ function renderApiPoolAccounts() {
     const plan = planLabel(account.planType);
     const freeBlocked = state.apiRestrictFreeAccounts && plan === 'FREE' && !selected;
     const quotaText = quotaSummaryText(account);
+    const priorityIndex = modalIndex.has(account.id) ? modalIndex.get(account.id) : -1;
+    const priority = selected ? (
+      '<div class="api-pool-priority">' +
+        '<span class="api-priority-badge">' + (priorityIndex === 0 ? '优先使用' : ('#' + (priorityIndex + 1))) + '</span>' +
+        '<span class="api-priority-controls">' +
+          '<button type="button" class="api-priority-btn" data-api-priority="top" data-account-id="' + escapeHtml(account.id) + '"' + (priorityIndex === 0 ? ' disabled' : '') + '>置顶</button>' +
+          '<button type="button" class="api-priority-btn icon-only" title="上移" data-api-priority="up" data-account-id="' + escapeHtml(account.id) + '"' + (priorityIndex <= 0 ? ' disabled' : '') + '>${icons.chevronUp}</button>' +
+          '<button type="button" class="api-priority-btn icon-only" title="下移" data-api-priority="down" data-account-id="' + escapeHtml(account.id) + '"' + (priorityIndex < 0 || priorityIndex >= modalIds.length - 1 ? ' disabled' : '') + '>${icons.chevronDown}</button>' +
+        '</span>' +
+      '</div>'
+    ) : '<div class="api-pool-priority"></div>';
     return '<label class="api-pool-row ' + (selected ? 'selected ' : '') + (freeBlocked ? 'disabled' : '') + '">' +
       '<input type="checkbox" data-api-modal-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + (freeBlocked ? ' disabled' : '') + '>' +
       '<div class="api-pool-main">' +
         '<div class="api-pool-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div>' +
         '<div class="api-pool-meta">' + escapeHtml(loginLabel(account)) + ' · ' + escapeHtml(quotaText) + '</div>' +
       '</div>' +
+      priority +
       '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
     '</label>';
   }).join('');
@@ -3826,7 +3924,7 @@ async function saveApiPool(options) {
   const res = await fetch('/_admin/local-access', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: true, accountIds: ids, restrictFreeAccounts: restrictFreeAccounts })
+    body: JSON.stringify({ enabled: true, accountIds: ids, restrictFreeAccounts: restrictFreeAccounts, routingStrategy: 'manual' })
   });
   const data = await res.json();
   state.data.localAccess = data;
@@ -4398,7 +4496,7 @@ async function activateApiServiceForCodexApp() {
   const res = await fetch('/_admin/codex-app/api-service', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountIds: ids, restrictFreeAccounts: restrictFreeAccounts, backup: true, restartCodexApp: true })
+    body: JSON.stringify({ accountIds: ids, restrictFreeAccounts: restrictFreeAccounts, routingStrategy: 'manual', backup: true, restartCodexApp: true })
   });
   const data = await res.json();
   setOutput(data);
@@ -4801,6 +4899,14 @@ document.addEventListener('click', function(event) {
   const moveDirection = target && target.dataset && target.dataset.moveAccount;
   const moveAccountId = target && target.dataset && target.dataset.accountId;
   if (moveDirection && moveAccountId) moveAccountOrder(moveAccountId, moveDirection);
+  const apiPriorityAction = target && target.dataset && target.dataset.apiPriority;
+  const apiPriorityAccountId = target && target.dataset && target.dataset.accountId;
+  if (apiPriorityAction && apiPriorityAccountId) {
+    event.preventDefault();
+    event.stopPropagation();
+    moveApiModalPriority(apiPriorityAccountId, apiPriorityAction);
+    return;
+  }
   const deleteId = target && target.dataset && target.dataset.deleteAccount;
   if (deleteId) deleteAccount(deleteId);
   const statsRange = target && target.dataset && target.dataset.statsRange;
@@ -4821,7 +4927,7 @@ document.addEventListener('change', function(event) {
   if (event.target && event.target.matches && event.target.matches('[data-api-modal-select]')) {
     if (event.target.checked) state.apiModalIds.add(event.target.value);
     else state.apiModalIds.delete(event.target.value);
-    syncApiSelectionControls();
+    renderApiPoolAccounts();
   }
   if (event.target && event.target.id === 'apiRestrictFreeAccounts') {
     state.apiRestrictFreeAccounts = event.target.checked;
