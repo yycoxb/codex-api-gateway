@@ -9,6 +9,8 @@
 - 本地 OpenAI 风格接口：
   - `GET /v1/models`
   - `POST /v1/chat/completions`
+  - `POST /v1/images/generations`（`gpt-image-2`，需要官方 OpenAI API Key）
+  - `POST /v1/images/edits`（`gpt-image-2`，需要官方 OpenAI API Key）
 - 管理界面：`http://127.0.0.1:18080/_admin`
 - 多账号导入与切换
 - Codex OAuth 添加账号
@@ -24,6 +26,7 @@
 - Windows / macOS / Linux 均可运行 Node 服务
 - Node.js `>= 18`
 - 已拥有可用的 Codex / ChatGPT 账号
+- 如需使用 `gpt-image-2` 图片接口，需要在启动 Gateway 的进程环境中设置 `OPENAI_API_KEY` 或 `CODEX_GATEWAY_OPENAI_API_KEY`
 
 Windows 用户可以直接使用项目里的 `.cmd` 启动脚本。
 
@@ -133,6 +136,17 @@ curl.exe -N http://127.0.0.1:18080/v1/chat/completions `
   -d '{"model":"gpt-5.4-mini","stream":true,"messages":[{"role":"user","content":"Reply with exactly: OK"}]}'
 ```
 
+图片生成调用（`gpt-image-2`）：
+
+> 图片接口走官方 OpenAI Images API；Codex / ChatGPT OAuth 账号池不会被用于图片生成。请先在启动 Gateway 前设置 `OPENAI_API_KEY` 或 `CODEX_GATEWAY_OPENAI_API_KEY`，不要把完整 Key 写进仓库。
+
+```powershell
+curl.exe http://127.0.0.1:18080/v1/images/generations `
+  -H "Authorization: Bearer $env:CODEX_GATEWAY_KEY" `
+  -H "Content-Type: application/json" `
+  -d '{"model":"gpt-image-2","prompt":"A small watercolor robot holding a sign that says OK","size":"1024x1024"}'
+```
+
 ## 本地数据位置
 
 运行时数据默认保存在：
@@ -190,6 +204,7 @@ wakeup-history.json
 src/
   server.js                 # CLI 入口
   gateway.js                # HTTP 服务、鉴权、路由、上游转发
+  # /v1/images/* 会转发到官方 OpenAI Images API
   account.js                # 账号导入、保存、刷新 token
   codex-oauth.js            # Codex OAuth 登录流程
   codex-app.js              # Codex App auth/config 兼容

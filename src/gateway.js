@@ -1,5 +1,5 @@
 import http from 'node:http';
-import { ACCOUNT_PATH, CORS_ALLOW_HEADERS, DEFAULT_CODEX_ORIGINATOR, DEFAULT_CODEX_USER_AGENT, DEFAULT_MODELS, UPSTREAM_BASE } from './constants.js';
+import { ACCOUNT_PATH, CORS_ALLOW_HEADERS, DEFAULT_CODEX_ORIGINATOR, DEFAULT_CODEX_USER_AGENT, DEFAULT_MODELS, OPENAI_API_BASE, UPSTREAM_BASE } from './constants.js';
 import {
   deleteAccount,
   exportAccountsFormatted,
@@ -384,6 +384,96 @@ function upstreamPath(url) {
   const u = new URL(url, 'http://localhost');
   if (!u.pathname.startsWith('/v1/')) return null;
   return u.pathname.slice(3) + u.search;
+}
+
+function isOpenAiImagesPath(reqUrl) {
+  const u = new URL(reqUrl, 'http://localhost');
+  return u.pathname === '/v1/images/generations' || u.pathname === '/v1/images/edits';
+}
+
+function configuredOpenAiApiKey() {
+  const key = process.env.CODEX_GATEWAY_OPENAI_API_KEY || process.env.OPENAI_API_KEY || '';
+  return String(key).trim() || null;
+}
+
+function hasHeader(headers, name) {
+  const lower = String(name || '').toLowerCase();
+  return Object.keys(headers || {}).some((key) => key.toLowerCase() === lower);
+}
+
+function copyOpenAiApiHeaders(req, body) {
+  const headers = {};
+  for (const [key, value] of Object.entries(req.headers)) {
+    const lower = key.toLowerCase();
+    if ([
+      'authorization',
+      'host',
+      'content-length',
+      'connection',
+      'accept-encoding',
+      'transfer-encoding',
+      'expect',
+      'x-api-key',
+      'chatgpt-account-id',
+    ].includes(lower)) {
+      continue;
+    }
+    headers[key] = Array.isArray(value) ? value.join(', ') : String(value);
+  }
+
+  headers.accept = headers.accept || 'application/json';
+  if (body?.length && !hasHeader(headers, 'content-type')) headers['content-type'] = 'application/json';
+  headers.authorization = `Bearer ${configuredOpenAiApiKey()}`;
+  if (process.env.OPENAI_ORG_ID && !hasHeader(headers, 'OpenAI-Organization')) {
+    headers['OpenAI-Organization'] = process.env.OPENAI_ORG_ID;
+  }
+  if (process.env.OPENAI_PROJECT_ID && !hasHeader(headers, 'OpenAI-Project')) {
+    headers['OpenAI-Project'] = process.env.OPENAI_PROJECT_ID;
+  }
+  return headers;
+}
+
+function openAiResponseHeaders(upstream) {
+  const headers = {
+    'content-type': upstream.headers.get('content-type') || 'application/json; charset=utf-8',
+    'access-control-allow-origin': '*',
+    'access-control-allow-methods': 'GET, POST, OPTIONS',
+    'access-control-allow-headers': CORS_ALLOW_HEADERS,
+  };
+  for (const key of ['cache-control', 'openai-processing-ms', 'openai-version', 'x-request-id']) {
+    const value = upstream.headers.get(key);
+    if (value) headers[key] = value;
+  }
+  return headers;
+}
+
+async function proxyOpenAiImageRequest(req, res, body) {
+  if (req.method !== 'POST') {
+    return jsonResponse(res, 405, { error: 'Only POST is allowed for image generation/edit endpoints' });
+  }
+
+  if (!configuredOpenAiApiKey()) {
+    return jsonResponse(res, 501, {
+      error: 'Images API proxy requires OPENAI_API_KEY or CODEX_GATEWAY_OPENAI_API_KEY in the Gateway process environment',
+      endpoints: ['POST /v1/images/generations', 'POST /v1/images/edits'],
+      model: 'gpt-image-2',
+    });
+  }
+
+  const target = upstreamPath(req.url);
+  const upstream = await fetch(`${OPENAI_API_BASE}${target}`, {
+    method: req.method,
+    headers: copyOpenAiApiHeaders(req, body),
+    body: body.length ? body : undefined,
+  });
+
+  res.writeHead(upstream.status, openAiResponseHeaders(upstream));
+  if (!upstream.body) return res.end();
+  try {
+    for await (const chunk of upstream.body) res.write(chunk);
+  } finally {
+    res.end();
+  }
 }
 
 function copyUpstreamHeaders(req, streamMode) {
@@ -970,7 +1060,10 @@ function handlePublicHelp(req, res, config) {
     endpoints: {
       models: 'GET /v1/models',
       chatCompletions: 'POST /v1/chat/completions',
+      imageGenerations: 'POST /v1/images/generations',
+      imageEdits: 'POST /v1/images/edits',
     },
+    imageNote: 'Image endpoints use the official OpenAI API and require OPENAI_API_KEY or CODEX_GATEWAY_OPENAI_API_KEY in the Gateway process environment.',
     note: '浏览器直接打开 /v1 不会携带 API Key；请在客户端请求头中设置 Authorization。',
   });
 }
@@ -1028,6 +1121,7 @@ export function createServer(config) {
       if (!u.pathname.startsWith('/v1/')) return jsonResponse(res, 404, { error: 'Not Found' });
 
       const body = await readBody(req);
+      if (isOpenAiImagesPath(req.url)) return await proxyOpenAiImageRequest(req, res, body);
       return await proxyCodexRequest(req, res, body);
     } catch (err) {
       console.error('[gateway] request failed:', err);

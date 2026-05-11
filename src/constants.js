@@ -14,6 +14,7 @@ export const LOCAL_ACCESS_STATS_PATH = path.join(APP_DIR, 'local-access-stats.js
 export const DEFAULT_PORT = Number(process.env.CODEX_GATEWAY_PORT || 18080);
 
 export const UPSTREAM_BASE = 'https://chatgpt.com/backend-api/codex';
+export const OPENAI_API_BASE = String(process.env.CODEX_GATEWAY_OPENAI_API_BASE || 'https://api.openai.com/v1').replace(/\/+$/, '');
 export const USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
 export const TOKEN_ENDPOINT = 'https://auth.openai.com/oauth/token';
 export const AUTH_ENDPOINT = 'https://auth.openai.com/oauth/authorize';
@@ -34,6 +35,8 @@ export const CORS_ALLOW_HEADERS = [
   'Originator',
   'Session_id',
   'ChatGPT-Account-Id',
+  'OpenAI-Organization',
+  'OpenAI-Project',
 ].join(', ');
 
 export const DEFAULT_MODELS = [
@@ -48,4 +51,5 @@ export const DEFAULT_MODELS = [
   'gpt-5.2-codex',
   'gpt-5.1-codex-max',
   'gpt-5.1-codex-mini',
+  'gpt-image-2',
 ];
