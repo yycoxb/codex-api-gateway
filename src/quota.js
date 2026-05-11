@@ -34,6 +34,37 @@ function resetTime(window) {
   return null;
 }
 
+function normalizePlanFamily(planType) {
+  const normalized = String(planType || '').trim().toLowerCase().replace(/[_\s-]+/g, '');
+  if (!normalized) return null;
+  if (normalized.includes('pro')) return 'pro';
+  if (normalized.includes('plus')) return 'plus';
+  if (normalized.includes('team')) return 'team';
+  if (normalized.includes('business')) return 'business';
+  if (normalized.includes('enterprise')) return 'enterprise';
+  if (normalized.includes('edu')) return 'edu';
+  if (normalized.includes('free')) return 'free';
+  if (normalized.includes('go')) return 'go';
+  return normalized;
+}
+
+function planFamilyChanged(previousPlan, nextPlan) {
+  const previous = normalizePlanFamily(previousPlan);
+  const next = normalizePlanFamily(nextPlan);
+  return Boolean(previous && next && previous !== next);
+}
+
+function clearStaleSubscriptionExpiry(account, previousPlan, nextPlan) {
+  if (!account?.subscriptionActiveUntil && !account?.subscription_active_until) return false;
+  account.subscriptionActiveUntil = null;
+  account.subscription_active_until = null;
+  account.subscriptionPlanType = null;
+  account.subscription_plan_type = null;
+  account.subscriptionExpiryClearedAt = nowMs();
+  account.subscriptionExpiryClearedReason = `plan_changed:${previousPlan || '<unknown>'}->${nextPlan || '<unknown>'}`;
+  return true;
+}
+
 function parseQuotaFromUsage(usage) {
   const rateLimit = usage?.rate_limit || {};
   const primary = rateLimit.primary_window || null;
@@ -89,7 +120,13 @@ export async function refreshAccountQuota(accountId) {
 
     account.quota = quota;
     account.quotaError = null;
-    account.planType = usage.plan_type || account.planType;
+    const previousPlanType = account.planType || account.plan_type || null;
+    if (usage.plan_type) {
+      account.planType = usage.plan_type;
+      if (planFamilyChanged(previousPlanType, usage.plan_type)) {
+        clearStaleSubscriptionExpiry(account, previousPlanType, usage.plan_type);
+      }
+    }
     account.usageUpdatedAt = nowMs();
     account = await saveAccount(account);
 
@@ -100,6 +137,7 @@ export async function refreshAccountQuota(accountId) {
         email: account.email,
         accountId: account.accountId,
         planType: account.planType,
+        subscriptionActiveUntil: account.subscriptionActiveUntil || null,
         quota: {
           hourly_percentage: quota.hourly_percentage,
           hourly_reset_time: quota.hourly_reset_time,

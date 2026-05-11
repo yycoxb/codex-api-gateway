@@ -3347,6 +3347,9 @@ function quotaSummaryText(account) {
 function subscriptionBox(account) {
   const plan = planLabel(account.planType);
   if (plan === 'FREE' || !account.subscriptionActiveUntil) {
+    if (plan !== 'FREE' && account.subscriptionExpiryClearedReason) {
+      return '<div class="sub-box warn"><span>${icons.calendar} 有效期待更新</span><span class="date">刷新授权后显示</span></div>';
+    }
     return '<div class="sub-box missing">${icons.calendar} 未获得订阅信息</div>';
   }
   const t = Date.parse(account.subscriptionActiveUntil);

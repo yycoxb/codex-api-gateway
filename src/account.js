@@ -27,6 +27,61 @@ function stableHash(value) {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
 }
 
+function normalizePlanFamily(planType) {
+  const normalized = String(planType || '').trim().toLowerCase().replace(/[_\s-]+/g, '');
+  if (!normalized) return null;
+  if (normalized.includes('pro')) return 'pro';
+  if (normalized.includes('plus')) return 'plus';
+  if (normalized.includes('team')) return 'team';
+  if (normalized.includes('business')) return 'business';
+  if (normalized.includes('enterprise')) return 'enterprise';
+  if (normalized.includes('edu')) return 'edu';
+  if (normalized.includes('free')) return 'free';
+  if (normalized.includes('go')) return 'go';
+  return normalized;
+}
+
+function samePlanFamily(left, right) {
+  const a = normalizePlanFamily(left);
+  const b = normalizePlanFamily(right);
+  return Boolean(a && b && a === b);
+}
+
+function resolveSubscriptionActiveUntil(account, tokenInfo = {}) {
+  const stored = account.subscriptionActiveUntil || account.subscription_active_until || null;
+  const storedPlan = account.subscriptionPlanType || account.subscription_plan_type || null;
+  const accountPlan = account.planType || account.plan_type || null;
+  const tokenPlan = tokenInfo.planType || null;
+
+  if (stored) {
+    if (storedPlan && accountPlan && !samePlanFamily(storedPlan, accountPlan)) return null;
+    if (!storedPlan && accountPlan && tokenPlan && !samePlanFamily(accountPlan, tokenPlan)) return null;
+    return stored;
+  }
+
+  if (tokenInfo.subscriptionActiveUntil) {
+    if (accountPlan && tokenPlan && !samePlanFamily(accountPlan, tokenPlan)) return null;
+    return tokenInfo.subscriptionActiveUntil;
+  }
+
+  return null;
+}
+
+function resolveSubscriptionStaleReason(account, tokenInfo = {}) {
+  const stored = account.subscriptionActiveUntil || account.subscription_active_until || null;
+  if (!stored) return null;
+  const storedPlan = account.subscriptionPlanType || account.subscription_plan_type || null;
+  const accountPlan = account.planType || account.plan_type || null;
+  const tokenPlan = tokenInfo.planType || null;
+  if (storedPlan && accountPlan && !samePlanFamily(storedPlan, accountPlan)) {
+    return `subscription_plan_mismatch:${storedPlan}->${accountPlan}`;
+  }
+  if (!storedPlan && accountPlan && tokenPlan && !samePlanFamily(accountPlan, tokenPlan)) {
+    return `token_plan_mismatch:${tokenPlan}->${accountPlan}`;
+  }
+  return null;
+}
+
 function buildAccountId({ email, accountId, idToken, accessToken }) {
   const payload = decodeJwtPayload(idToken);
   const subject = payload?.sub || '';
@@ -46,7 +101,9 @@ function accountSummary(account) {
     accountName: account.accountName || account.account_name,
     accountStructure: account.accountStructure,
     planType: account.planType || tokenInfo.planType,
-    subscriptionActiveUntil: account.subscriptionActiveUntil || tokenInfo.subscriptionActiveUntil,
+    subscriptionActiveUntil: resolveSubscriptionActiveUntil(account, tokenInfo),
+    subscriptionExpiryClearedAt: account.subscriptionExpiryClearedAt || account.subscription_expiry_cleared_at || null,
+    subscriptionExpiryClearedReason: account.subscriptionExpiryClearedReason || account.subscription_expiry_cleared_reason || resolveSubscriptionStaleReason(account, tokenInfo),
     tokenGeneration: account.tokenGeneration ?? account.token_generation,
     tokenSourceMode: account.tokenSourceMode || account.token_source_mode,
     requiresReauth: Boolean(account.requiresReauth || account.requires_reauth),
@@ -161,7 +218,8 @@ function accountExportObject(account) {
     api_provider_name: account.apiProviderName || account.api_provider_name || undefined,
     user_id: account.userId || account.user_id || tokenInfo.userId || null,
     plan_type: account.planType || account.plan_type || tokenInfo.planType || null,
-    subscription_active_until: account.subscriptionActiveUntil || account.subscription_active_until || tokenInfo.subscriptionActiveUntil || null,
+    subscription_active_until: resolveSubscriptionActiveUntil(account, tokenInfo),
+    subscription_plan_type: account.subscriptionPlanType || account.subscription_plan_type || undefined,
     account_id: account.accountId || account.account_id || null,
     organization_id: account.organizationId || account.organization_id || null,
     account_name: account.accountName || account.account_name || undefined,
@@ -434,6 +492,14 @@ function buildOfficialAuthSnapshot(auth, fallbackAccount = null) {
     auth.accountId ||
     auth.account?.id
   );
+  const planType = normalizeOptional(auth.plan_type || auth.planType || auth.account?.planType || tokenInfo.planType);
+  const subscriptionActiveUntil = normalizeOptional(
+    auth.subscription_active_until ||
+    auth.subscriptionActiveUntil ||
+    auth.account?.subscription_active_until ||
+    auth.account?.subscriptionActiveUntil ||
+    tokenInfo.subscriptionActiveUntil
+  );
   const email = normalizeOptional(
     auth.email ||
     auth.user?.email ||
@@ -451,14 +517,11 @@ function buildOfficialAuthSnapshot(auth, fallbackAccount = null) {
     email,
     accountId,
     userId: normalizeOptional(auth.user_id || auth.userId || auth.user?.id || tokenInfo.userId || userIdFromTokens(tokens)),
-    planType: normalizeOptional(auth.plan_type || auth.planType || auth.account?.planType || tokenInfo.planType),
-    subscriptionActiveUntil: normalizeOptional(
-      auth.subscription_active_until ||
-      auth.subscriptionActiveUntil ||
-      auth.account?.subscription_active_until ||
-      auth.account?.subscriptionActiveUntil ||
-      tokenInfo.subscriptionActiveUntil
-    ),
+    planType,
+    subscriptionActiveUntil,
+    subscriptionPlanType: subscriptionActiveUntil
+      ? normalizeOptional(auth.subscription_plan_type || auth.subscriptionPlanType || planType || tokenInfo.planType)
+      : null,
     lastRefreshAt: parseLastRefreshMs(auth.last_refresh || auth.lastRefresh || auth.updated_at || auth.updatedAt),
   };
 }
@@ -541,6 +604,7 @@ function applyOfficialSnapshot(account, snapshot) {
   }
   if (snapshot.subscriptionActiveUntil && normalizeOptional(account.subscriptionActiveUntil) !== snapshot.subscriptionActiveUntil) {
     account.subscriptionActiveUntil = snapshot.subscriptionActiveUntil;
+    account.subscriptionPlanType = snapshot.subscriptionPlanType || snapshot.planType || account.planType || null;
     changed = true;
   }
 
@@ -732,6 +796,11 @@ function accountFromAuthObject(auth, importedFrom = 'json') {
     accountStructure: auth.accountStructure || auth.account_structure || 'personal',
     planType: auth.planType || auth.plan_type || tokenInfo.planType,
     subscriptionActiveUntil: auth.subscriptionActiveUntil || auth.subscription_active_until || tokenInfo.subscriptionActiveUntil,
+    subscriptionPlanType: auth.subscriptionPlanType || auth.subscription_plan_type || (
+      auth.subscriptionActiveUntil || auth.subscription_active_until || tokenInfo.subscriptionActiveUntil
+        ? (auth.planType || auth.plan_type || tokenInfo.planType)
+        : null
+    ),
     tokenGeneration: Number(auth.tokenGeneration ?? auth.token_generation ?? 0) || 0,
     tokenSourceMode: auth.tokenSourceMode || auth.token_source_mode || 'managed',
     requiresReauth: Boolean(auth.requiresReauth || auth.requires_reauth),
@@ -1097,7 +1166,10 @@ async function performTokenRefresh(account, reason = 'refresh') {
     account.userId = account.userId || tokenInfo.userId;
     account.teamName = account.teamName || tokenInfo.teamName || '个人账户';
     account.planType = tokenInfo.planType || account.planType;
-    account.subscriptionActiveUntil = tokenInfo.subscriptionActiveUntil || account.subscriptionActiveUntil;
+    if (tokenInfo.subscriptionActiveUntil) {
+      account.subscriptionActiveUntil = tokenInfo.subscriptionActiveUntil;
+      account.subscriptionPlanType = tokenInfo.planType || account.planType || null;
+    }
     account.tokenGeneration = Number(account.tokenGeneration ?? account.token_generation ?? 0) + 1;
     account.tokenUpdatedAt = nowMs();
     account.tokenSourceMode = 'managed';
