@@ -61,9 +61,11 @@ export function renderAdminHtml() {
         linear-gradient(135deg, #f8fafc 0%, #cbd5e1 44%, #94a3b8 100%);
       --plan-plus-color: #1f2937;
       --plan-plus-border: rgba(226, 232, 240, 0.72);
-      --plan-pro-bg: linear-gradient(180deg, rgba(245, 208, 111, .22) 0%, rgba(212, 175, 55, .10) 100%);
-      --plan-pro-color: #ffe08a;
-      --plan-pro-border: rgba(245, 208, 111, 0.40);
+      --plan-pro-bg:
+        radial-gradient(circle at 22% 20%, rgba(255, 250, 210, .72), transparent 34%),
+        linear-gradient(135deg, #fff1b8 0%, #f5d06f 42%, #d4af37 70%, #9f6f18 100%);
+      --plan-pro-color: #171207;
+      --plan-pro-border: rgba(255, 232, 150, .72);
       --plan-free-bg: rgba(255, 255, 255, .055);
       --plan-free-color: #b9ad8d;
       --plan-free-border: rgba(218, 176, 71, .17);
@@ -1794,10 +1796,11 @@ export function renderAdminHtml() {
       background: var(--plan-pro-bg);
       color: var(--plan-pro-color);
       border-color: var(--plan-pro-border);
+      text-shadow: 0 1px 0 rgba(255, 248, 218, .35);
     }
 
     .tier-badge.pro::before {
-      background: linear-gradient(180deg, rgba(255, 239, 178, .52), rgba(255, 239, 178, 0));
+      background: linear-gradient(180deg, rgba(255, 250, 210, .70), rgba(255, 239, 178, 0));
     }
 
     .account-meta {
@@ -2435,9 +2438,9 @@ export function renderAdminHtml() {
 
     .tier-badge.pro {
       box-shadow:
-        inset 0 1px 0 rgba(255, 239, 178, .16),
-        0 5px 14px rgba(0, 0, 0, .20);
-      text-shadow: 0 1px 0 rgba(0, 0, 0, .28);
+        0 0 0 2px rgba(212, 175, 55, .16),
+        0 0 18px rgba(245, 208, 111, .24),
+        inset 0 1px 0 rgba(255, 255, 255, .38);
     }
 
     .tier-badge.free {
