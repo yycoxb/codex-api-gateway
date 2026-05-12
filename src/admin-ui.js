@@ -1571,7 +1571,7 @@ export function renderAdminHtml() {
 
     .stats-grid {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 14px;
     }
 
@@ -1597,6 +1597,7 @@ export function renderAdminHtml() {
     .stats-metric.teal { border-top-color: rgba(20, 184, 166, .48); }
     .stats-metric.purple { border-top-color: rgba(168, 85, 247, .44); }
     .stats-metric.orange { border-top-color: rgba(245, 158, 11, .48); }
+    .stats-metric.gold { border-top-color: rgba(245, 208, 111, .68); }
 
     .stats-metric-label {
       color: var(--accent);
@@ -1607,6 +1608,7 @@ export function renderAdminHtml() {
     .stats-metric.teal .stats-metric-label { color: #0f766e; }
     .stats-metric.purple .stats-metric-label { color: #7c3aed; }
     .stats-metric.orange .stats-metric-label { color: #b45309; }
+    .stats-metric.gold .stats-metric-label { color: #b7791f; }
 
     .stats-metric-value {
       margin-top: 10px;
@@ -2509,10 +2511,12 @@ export function renderAdminHtml() {
     .stats-metric.teal { border-top-color: rgba(110, 231, 183, .44); }
     .stats-metric.purple { border-top-color: rgba(196, 181, 253, .38); }
     .stats-metric.orange { border-top-color: rgba(245, 196, 81, .48); }
+    .stats-metric.gold { border-top-color: rgba(255, 214, 90, .72); }
     .stats-metric-label,
     .stats-metric.orange .stats-metric-label { color: var(--accent); }
     .stats-metric.teal .stats-metric-label { color: #9ff0cf; }
     .stats-metric.purple .stats-metric-label { color: #c4b5fd; }
+    .stats-metric.gold .stats-metric-label { color: #ffe08a; }
 
     .stats-failure,
     .diagnostic-line.warn {
@@ -3090,6 +3094,11 @@ export function renderAdminHtml() {
               <div class="stats-metric-value" id="statsTokenTotal">0</div>
               <div class="stats-metric-sub" id="statsTokenSub">输入 0 / 输出 0</div>
             </div>
+            <div class="stats-metric gold">
+              <div class="stats-metric-label">API 等价费用</div>
+              <div class="stats-metric-value" id="statsCostEstimate">$0.00</div>
+              <div class="stats-metric-sub" id="statsCostSub">按 GPT-5.5 官方价估算</div>
+            </div>
             <div class="stats-metric purple">
               <div class="stats-metric-label">缓存 / 思考</div>
               <div class="stats-metric-value" id="statsCacheReasoning">0</div>
@@ -3150,6 +3159,12 @@ export function renderAdminHtml() {
 <script>
 const ACCOUNT_ORDER_STORAGE_KEY = 'codex-api-gateway.account-order.v1';
 const RUNTIME_ACTIVITY_HOLD_MS = 12000;
+const API_EQUIVALENT_PRICING = {
+  model: 'GPT-5.5',
+  inputUsdPerMillion: 5,
+  cachedInputUsdPerMillion: 0.5,
+  outputUsdPerMillion: 30,
+};
 const state = {
   data: null,
   showKey: false,
@@ -3380,6 +3395,33 @@ function compactNumber(value) {
   if (Math.abs(n) >= 1000000) return (n / 1000000).toFixed(n >= 10000000 ? 1 : 1).replace(/\.0$/, '') + 'M';
   if (Math.abs(n) >= 1000) return (n / 1000).toFixed(n >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'K';
   return String(Math.round(n));
+}
+
+function usdText(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n <= 0) return '$0.00';
+  if (n < 0.01) return '<$0.01';
+  if (n < 1000) return '$' + n.toFixed(n >= 100 ? 1 : 2).replace(/\.0$/, '');
+  return '$' + n.toLocaleString(undefined, {
+    maximumFractionDigits: n >= 10000 ? 0 : 1,
+  });
+}
+
+function apiEquivalentCost(totals) {
+  totals = totals || {};
+  const inputTokens = Math.max(0, Number(totals.inputTokens || 0));
+  const cachedTokens = Math.min(inputTokens, Math.max(0, Number(totals.cachedTokens || 0)));
+  const billableInputTokens = Math.max(0, inputTokens - cachedTokens);
+  const outputTokens = Math.max(0, Number(totals.outputTokens || 0));
+  const inputUsd = (billableInputTokens / 1000000) * API_EQUIVALENT_PRICING.inputUsdPerMillion;
+  const cachedUsd = (cachedTokens / 1000000) * API_EQUIVALENT_PRICING.cachedInputUsdPerMillion;
+  const outputUsd = (outputTokens / 1000000) * API_EQUIVALENT_PRICING.outputUsdPerMillion;
+  return {
+    inputUsd,
+    cachedUsd,
+    outputUsd,
+    totalUsd: inputUsd + cachedUsd + outputUsd,
+  };
 }
 
 function latencyText(ms) {
@@ -3993,6 +4035,7 @@ function renderApiStatsPanel() {
   const failureCount = Number(totals.failureCount || 0);
   const avgLatency = requestCount ? Number(totals.totalLatencyMs || 0) / requestCount : 0;
   const successRate = requestCount ? Math.round((successCount / requestCount) * 100) : 0;
+  const cost = apiEquivalentCost(totals);
   const baseUrl = state.data.baseUrl || '';
   const chatUrl = baseUrl ? baseUrl + '/chat/completions' : '';
   let port = '-';
@@ -4006,6 +4049,8 @@ function renderApiStatsPanel() {
   if ($('statsRequestSub')) $('statsRequestSub').textContent = '成功 ' + compactNumber(successCount) + ' / 失败 ' + compactNumber(failureCount);
   if ($('statsTokenTotal')) $('statsTokenTotal').textContent = compactNumber(totals.totalTokens || 0);
   if ($('statsTokenSub')) $('statsTokenSub').textContent = '输入 ' + compactNumber(totals.inputTokens || 0) + ' / 输出 ' + compactNumber(totals.outputTokens || 0);
+  if ($('statsCostEstimate')) $('statsCostEstimate').textContent = usdText(cost.totalUsd);
+  if ($('statsCostSub')) $('statsCostSub').textContent = API_EQUIVALENT_PRICING.model + ' · 输入 ' + usdText(cost.inputUsd) + ' / 缓存 ' + usdText(cost.cachedUsd) + ' / 输出 ' + usdText(cost.outputUsd);
   if ($('statsCacheReasoning')) $('statsCacheReasoning').textContent = compactNumber(Number(totals.cachedTokens || 0) + Number(totals.reasoningTokens || 0));
   if ($('statsCacheSub')) $('statsCacheSub').textContent = '缓存 ' + compactNumber(totals.cachedTokens || 0) + ' / 思考 ' + compactNumber(totals.reasoningTokens || 0);
   if ($('statsAvgLatency')) $('statsAvgLatency').textContent = latencyText(avgLatency);
