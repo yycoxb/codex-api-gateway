@@ -62,10 +62,11 @@ export function renderAdminHtml() {
       --plan-plus-color: #1f2937;
       --plan-plus-border: rgba(226, 232, 240, 0.72);
       --plan-pro-bg:
-        radial-gradient(circle at 22% 20%, rgba(255, 250, 210, .72), transparent 34%),
-        linear-gradient(135deg, #fff1b8 0%, #f5d06f 42%, #d4af37 70%, #9f6f18 100%);
+        radial-gradient(circle at 20% 22%, rgba(255, 255, 236, .92) 0 12%, transparent 31%),
+        radial-gradient(circle at 82% 78%, rgba(255, 191, 73, .56), transparent 34%),
+        linear-gradient(135deg, #fff7c8 0%, #ffd65a 27%, #f5b82e 48%, #b7791f 70%, #ffe68a 100%);
       --plan-pro-color: #171207;
-      --plan-pro-border: rgba(255, 232, 150, .72);
+      --plan-pro-border: rgba(255, 238, 168, .88);
       --plan-free-bg: rgba(255, 255, 255, .055);
       --plan-free-color: #b9ad8d;
       --plan-free-border: rgba(218, 176, 71, .17);
@@ -521,6 +522,35 @@ export function renderAdminHtml() {
           0 0 0 1px rgba(110, 231, 183, .36),
           0 0 28px rgba(110, 231, 183, .16),
           0 22px 58px rgba(0, 0, 0, .48);
+      }
+    }
+
+    @keyframes pro-badge-shine {
+      0%, 58%, 100% { transform: translateX(-150%) skewX(-18deg); opacity: 0; }
+      70% { opacity: .95; }
+      86% { transform: translateX(150%) skewX(-18deg); opacity: 0; }
+    }
+
+    @keyframes pro-badge-glow {
+      0%, 100% {
+        filter: saturate(1.06);
+        box-shadow:
+          0 0 0 1px rgba(255, 238, 168, .58),
+          0 0 0 3px rgba(212, 175, 55, .14),
+          0 0 18px rgba(245, 208, 111, .34),
+          0 8px 18px rgba(120, 72, 11, .28),
+          inset 0 1px 0 rgba(255, 255, 255, .74),
+          inset 0 -1px 0 rgba(86, 48, 8, .28);
+      }
+      50% {
+        filter: saturate(1.24);
+        box-shadow:
+          0 0 0 1px rgba(255, 245, 190, .78),
+          0 0 0 4px rgba(245, 208, 111, .18),
+          0 0 26px rgba(255, 213, 94, .54),
+          0 10px 24px rgba(155, 102, 21, .36),
+          inset 0 1px 0 rgba(255, 255, 255, .86),
+          inset 0 -1px 0 rgba(86, 48, 8, .18);
       }
     }
 
@@ -1862,14 +1892,34 @@ export function renderAdminHtml() {
     }
 
     .tier-badge.pro {
+      min-width: 62px;
+      padding: 0 14px;
       background: var(--plan-pro-bg);
       color: var(--plan-pro-color);
       border-color: var(--plan-pro-border);
-      text-shadow: 0 1px 0 rgba(255, 248, 218, .35);
+      letter-spacing: .055em;
+      text-shadow:
+        0 1px 0 rgba(255, 251, 224, .56),
+        0 0 7px rgba(255, 248, 196, .40);
+      background-size: 155% 155%;
+      animation: pro-badge-glow 2.9s ease-in-out infinite;
     }
 
     .tier-badge.pro::before {
-      background: linear-gradient(180deg, rgba(255, 250, 210, .70), rgba(255, 239, 178, 0));
+      inset: 1px 8px auto 8px;
+      height: 42%;
+      background: linear-gradient(180deg, rgba(255, 255, 232, .82), rgba(255, 239, 178, 0));
+      opacity: .92;
+    }
+
+    .tier-badge.pro::after {
+      content: '';
+      position: absolute;
+      inset: -40% -52%;
+      background: linear-gradient(115deg, transparent 42%, rgba(255, 255, 255, .78) 49%, rgba(255, 244, 168, .58) 53%, transparent 61%);
+      opacity: 0;
+      pointer-events: none;
+      animation: pro-badge-shine 3.8s ease-in-out infinite;
     }
 
     .account-meta {
@@ -2512,9 +2562,12 @@ export function renderAdminHtml() {
 
     .tier-badge.pro {
       box-shadow:
-        0 0 0 2px rgba(212, 175, 55, .16),
-        0 0 18px rgba(245, 208, 111, .24),
-        inset 0 1px 0 rgba(255, 255, 255, .38);
+        0 0 0 1px rgba(255, 238, 168, .62),
+        0 0 0 4px rgba(212, 175, 55, .16),
+        0 0 24px rgba(245, 208, 111, .38),
+        0 8px 20px rgba(120, 72, 11, .30),
+        inset 0 1px 0 rgba(255, 255, 255, .56),
+        inset 0 -1px 0 rgba(86, 48, 8, .24);
     }
 
     .tier-badge.free {
@@ -2649,7 +2702,9 @@ export function renderAdminHtml() {
 
     @media (prefers-reduced-motion: reduce) {
       .ghcp-account-card.api-using,
-      .ghcp-account-card.api-using::after {
+      .ghcp-account-card.api-using::after,
+      .tier-badge.pro,
+      .tier-badge.pro::after {
         animation: none;
       }
     }
