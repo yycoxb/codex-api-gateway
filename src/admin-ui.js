@@ -1962,12 +1962,12 @@ export function renderAdminHtml() {
     }
 
     .tier-badge.team {
-      min-width: 66px;
-      padding: 0 14px;
+      min-width: 58px;
+      padding: 0 12px;
       background: var(--plan-team-bg);
       color: var(--plan-team-color);
       border-color: var(--plan-team-border);
-      letter-spacing: .05em;
+      letter-spacing: .025em;
       text-shadow:
         0 1px 0 rgba(255, 255, 255, .62),
         0 0 7px rgba(224, 242, 254, .38);
