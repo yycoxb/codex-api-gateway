@@ -67,6 +67,12 @@ export function renderAdminHtml() {
         linear-gradient(135deg, #fff7c8 0%, #ffd65a 27%, #f5b82e 48%, #b7791f 70%, #ffe68a 100%);
       --plan-pro-color: #171207;
       --plan-pro-border: rgba(255, 238, 168, .88);
+      --plan-team-bg:
+        radial-gradient(circle at 18% 20%, rgba(232, 246, 255, .96) 0 11%, transparent 32%),
+        radial-gradient(circle at 82% 78%, rgba(125, 211, 252, .50), transparent 36%),
+        linear-gradient(135deg, #eff8ff 0%, #bfe8ff 34%, #7dd3fc 58%, #4f8fcb 78%, #dbeafe 100%);
+      --plan-team-color: #0b1f35;
+      --plan-team-border: rgba(186, 230, 253, .86);
       --plan-free-bg: rgba(255, 255, 255, .055);
       --plan-free-color: #b9ad8d;
       --plan-free-border: rgba(218, 176, 71, .17);
@@ -552,6 +558,17 @@ export function renderAdminHtml() {
           inset 0 1px 0 rgba(255, 255, 255, .86),
           inset 0 -1px 0 rgba(86, 48, 8, .18);
       }
+    }
+
+    @keyframes team-badge-shine {
+      0%, 64%, 100% { transform: translateX(-145%) skewX(-18deg); opacity: 0; }
+      76% { opacity: .72; }
+      90% { transform: translateX(145%) skewX(-18deg); opacity: 0; }
+    }
+
+    @keyframes team-card-aura {
+      0%, 100% { opacity: .72; transform: translate3d(0, 0, 0); }
+      50% { opacity: .96; transform: translate3d(-2px, 1px, 0); }
     }
 
     .strip-icon .icon-svg,
@@ -1924,6 +1941,41 @@ export function renderAdminHtml() {
       animation: pro-badge-shine 3.8s ease-in-out infinite;
     }
 
+    .tier-badge.team {
+      min-width: 66px;
+      padding: 0 14px;
+      background: var(--plan-team-bg);
+      color: var(--plan-team-color);
+      border-color: var(--plan-team-border);
+      letter-spacing: .05em;
+      text-shadow:
+        0 1px 0 rgba(255, 255, 255, .62),
+        0 0 7px rgba(224, 242, 254, .38);
+      box-shadow:
+        0 0 0 1px rgba(186, 230, 253, .55),
+        0 0 0 3px rgba(56, 189, 248, .12),
+        0 0 18px rgba(125, 211, 252, .24),
+        inset 0 1px 0 rgba(255, 255, 255, .72),
+        inset 0 -1px 0 rgba(15, 23, 42, .20);
+    }
+
+    .tier-badge.team::before {
+      inset: 1px 8px auto 8px;
+      height: 42%;
+      background: linear-gradient(180deg, rgba(255, 255, 255, .80), rgba(219, 234, 254, 0));
+      opacity: .86;
+    }
+
+    .tier-badge.team::after {
+      content: '';
+      position: absolute;
+      inset: -40% -52%;
+      background: linear-gradient(115deg, transparent 42%, rgba(255, 255, 255, .70) 49%, rgba(186, 230, 253, .50) 54%, transparent 62%);
+      opacity: 0;
+      pointer-events: none;
+      animation: team-badge-shine 4.4s ease-in-out infinite;
+    }
+
     .account-meta {
       display: flex;
       flex-direction: column;
@@ -2381,6 +2433,49 @@ export function renderAdminHtml() {
       box-shadow: 0 0 18px rgba(110, 231, 183, .18);
     }
 
+    .ghcp-account-card.plan-team {
+      border-color: rgba(125, 211, 252, .38);
+      background:
+        radial-gradient(circle at 88% 10%, rgba(125, 211, 252, .18), transparent 32%),
+        radial-gradient(circle at 8% 92%, rgba(59, 130, 246, .12), transparent 36%),
+        linear-gradient(180deg, rgba(20, 27, 34, .94), rgba(11, 14, 18, .92));
+      box-shadow:
+        inset 0 1px 0 rgba(186, 230, 253, .08),
+        0 18px 44px rgba(0, 0, 0, .38);
+    }
+
+    .ghcp-account-card.plan-team::before {
+      height: 2px;
+      background: linear-gradient(90deg, transparent, rgba(125, 211, 252, .76), rgba(245, 208, 111, .34), transparent);
+      opacity: .86;
+    }
+
+    .ghcp-account-card.plan-team::after {
+      content: '';
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      background:
+        linear-gradient(115deg, transparent 0 64%, rgba(125, 211, 252, .055) 65%, transparent 78%),
+        radial-gradient(circle at 82% 20%, rgba(224, 242, 254, .08), transparent 22%);
+      pointer-events: none;
+      animation: team-card-aura 5.5s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.plan-team > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .ghcp-account-card.plan-team:hover {
+      border-color: rgba(186, 230, 253, .58);
+      box-shadow:
+        inset 0 1px 0 rgba(186, 230, 253, .12),
+        0 0 0 1px rgba(125, 211, 252, .10),
+        0 0 28px rgba(56, 189, 248, .12),
+        var(--shadow-md);
+    }
+
     .ghcp-account-card.selected:not(.current),
     .wakeup-account-row.selected,
     .api-pool-row.selected,
@@ -2574,6 +2669,16 @@ export function renderAdminHtml() {
         inset 0 -1px 0 rgba(86, 48, 8, .24);
     }
 
+    .tier-badge.team {
+      box-shadow:
+        0 0 0 1px rgba(186, 230, 253, .58),
+        0 0 0 4px rgba(56, 189, 248, .13),
+        0 0 22px rgba(125, 211, 252, .28),
+        0 8px 20px rgba(3, 105, 161, .18),
+        inset 0 1px 0 rgba(255, 255, 255, .58),
+        inset 0 -1px 0 rgba(15, 23, 42, .20);
+    }
+
     .tier-badge.free {
       box-shadow:
         inset 0 1px 0 rgba(255, 255, 255, .04),
@@ -2708,7 +2813,9 @@ export function renderAdminHtml() {
       .ghcp-account-card.api-using,
       .ghcp-account-card.api-using::after,
       .tier-badge.pro,
-      .tier-badge.pro::after {
+      .tier-badge.pro::after,
+      .ghcp-account-card.plan-team::after,
+      .tier-badge.team::after {
         animation: none;
       }
     }
@@ -3702,6 +3809,13 @@ function planBadgeClass(plan) {
   const value = String(plan || '').trim().toUpperCase();
   if (value === 'FREE') return 'free';
   if (value === 'PRO') return 'pro';
+  if (value === 'TEAM') return 'team';
+  return '';
+}
+
+function accountCardPlanClass(plan) {
+  const value = String(plan || '').trim().toUpperCase();
+  if (value === 'TEAM') return 'plan-team';
   return '';
 }
 
@@ -4261,7 +4375,7 @@ function renderAccounts() {
     const selected = state.selectedWakeupIds.has(account.id);
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
-    return '<section class="ghcp-account-card acct-card ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
+    return '<section class="ghcp-account-card acct-card ' + accountCardPlanClass(plan) + ' ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
         '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
