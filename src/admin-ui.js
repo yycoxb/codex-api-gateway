@@ -645,6 +645,11 @@ export function renderAdminHtml() {
     .codex-local-access-card {
       height: auto;
       min-height: var(--overview-card-height, 452px);
+      --card-light-x: 50%;
+      --card-light-y: 18%;
+      --card-light-opacity: 0;
+      --card-tilt-x: 0deg;
+      --card-tilt-y: 0deg;
       background: linear-gradient(135deg, #f5fbff 0%, #eef7ff 45%, #edfdf8 100%);
       border: 1.5px solid rgba(14, 165, 233, .18);
     }
@@ -2457,7 +2462,18 @@ export function renderAdminHtml() {
         linear-gradient(115deg, transparent 0 58%, rgba(186, 230, 253, .070) 62%, transparent 79%);
     }
 
+    .codex-local-access-card .card-light-follow {
+      background:
+        radial-gradient(circle at var(--card-light-x, 50%) var(--card-light-y, 18%), rgba(255, 252, 215, .28), rgba(245, 208, 111, .16) 17%, rgba(110, 231, 183, .07) 34%, transparent 62%),
+        linear-gradient(115deg, transparent 0 56%, rgba(245, 208, 111, .065) 62%, transparent 79%);
+    }
+
     .ghcp-account-card > :not(.card-light-follow) {
+      position: relative;
+      z-index: 1;
+    }
+
+    .codex-local-access-card > :not(.card-light-follow) {
       position: relative;
       z-index: 1;
     }
@@ -2993,6 +3009,9 @@ export function renderAdminHtml() {
       .card-light-follow {
         display: none;
       }
+      .codex-local-access-card.card-light-active {
+        transform: none;
+      }
     }
   </style>
 </head>
@@ -3030,6 +3049,7 @@ export function renderAdminHtml() {
 
       <div class="codex-accounts-grid">
         <section class="ghcp-account-card codex-local-access-card" id="localAccessCard">
+          <span class="card-light-follow" aria-hidden="true"></span>
           <div class="card-head">
             <div class="card-brand">
               <div class="card-icon">${icons.server}</div>
@@ -4311,23 +4331,28 @@ function resetAccountCardLight(card) {
   card.classList.remove('card-light-active');
 }
 
-function bindAccountCardLightFollow() {
-  const list = $('accountsList');
-  if (!list || list.dataset.cardLightBound === '1') return;
-  list.dataset.cardLightBound = '1';
-  list.addEventListener('pointermove', function(event) {
-    const card = event.target && event.target.closest ? event.target.closest('.ghcp-account-card.acct-card') : null;
-    if (!card || !list.contains(card)) return;
+function bindCardLightFollow(root, selector) {
+  if (!root || root.dataset.cardLightBound === '1') return;
+  root.dataset.cardLightBound = '1';
+  root.addEventListener('pointermove', function(event) {
+    const card = event.target && event.target.closest ? event.target.closest(selector) : null;
+    if (!card || !root.contains(card)) return;
     updateAccountCardLight(card, event);
   });
-  list.addEventListener('pointerleave', function() {
-    list.querySelectorAll('.ghcp-account-card.card-light-active').forEach(resetAccountCardLight);
+  root.addEventListener('pointerleave', function() {
+    root.querySelectorAll('.card-light-active').forEach(resetAccountCardLight);
   });
-  list.addEventListener('pointerout', function(event) {
-    const card = event.target && event.target.closest ? event.target.closest('.ghcp-account-card.acct-card') : null;
-    if (!card || !list.contains(card)) return;
+  root.addEventListener('pointerout', function(event) {
+    const card = event.target && event.target.closest ? event.target.closest(selector) : null;
+    if (!card || !root.contains(card)) return;
     if (!event.relatedTarget || !card.contains(event.relatedTarget)) resetAccountCardLight(card);
   });
+}
+
+function bindAccountCardLightFollow() {
+  bindCardLightFollow($('accountsList'), '.ghcp-account-card.acct-card');
+  const apiCard = $('localAccessCard');
+  if (apiCard) bindCardLightFollow(apiCard, '.codex-local-access-card');
 }
 
 function renderApiPoolAccounts() {
