@@ -571,6 +571,16 @@ export function renderAdminHtml() {
       50% { opacity: .96; transform: translate3d(-2px, 1px, 0); }
     }
 
+    @keyframes pro-card-aura {
+      0%, 100% { opacity: .68; transform: translate3d(0, 0, 0) scale(1); }
+      50% { opacity: .98; transform: translate3d(2px, -1px, 0) scale(1.01); }
+    }
+
+    @keyframes pro-card-crown-line {
+      0%, 100% { opacity: .58; transform: translateX(-18%); }
+      50% { opacity: .95; transform: translateX(18%); }
+    }
+
     .strip-icon .icon-svg,
     .card-icon .icon-svg {
       width: 24px;
@@ -2433,6 +2443,53 @@ export function renderAdminHtml() {
       box-shadow: 0 0 18px rgba(110, 231, 183, .18);
     }
 
+    .ghcp-account-card.plan-pro {
+      border-color: rgba(255, 214, 90, .48);
+      background:
+        radial-gradient(circle at 88% 8%, rgba(255, 223, 95, .22), transparent 31%),
+        radial-gradient(circle at 12% 95%, rgba(180, 117, 20, .16), transparent 38%),
+        linear-gradient(180deg, rgba(36, 27, 11, .96), rgba(13, 11, 7, .94));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 232, 150, .10),
+        0 0 0 1px rgba(255, 214, 90, .08),
+        0 18px 44px rgba(0, 0, 0, .40);
+    }
+
+    .ghcp-account-card.plan-pro::before {
+      height: 2px;
+      background:
+        linear-gradient(90deg, transparent, rgba(255, 248, 188, .86), rgba(245, 184, 46, .78), rgba(255, 248, 188, .70), transparent);
+      opacity: .92;
+      animation: pro-card-crown-line 4.2s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.plan-pro:not(.api-using)::after {
+      content: '';
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      background:
+        linear-gradient(118deg, transparent 0 58%, rgba(255, 214, 90, .075) 60%, transparent 76%),
+        radial-gradient(circle at 80% 18%, rgba(255, 250, 210, .12), transparent 23%),
+        radial-gradient(circle at 26% 12%, rgba(245, 184, 46, .10), transparent 18%);
+      pointer-events: none;
+      animation: pro-card-aura 4.8s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.plan-pro > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .ghcp-account-card.plan-pro:hover {
+      border-color: rgba(255, 232, 150, .70);
+      box-shadow:
+        inset 0 1px 0 rgba(255, 232, 150, .16),
+        0 0 0 1px rgba(255, 214, 90, .14),
+        0 0 34px rgba(245, 184, 46, .16),
+        var(--shadow-md);
+    }
+
     .ghcp-account-card.plan-team {
       border-color: rgba(125, 211, 252, .38);
       background:
@@ -2814,6 +2871,8 @@ export function renderAdminHtml() {
       .ghcp-account-card.api-using::after,
       .tier-badge.pro,
       .tier-badge.pro::after,
+      .ghcp-account-card.plan-pro::before,
+      .ghcp-account-card.plan-pro::after,
       .ghcp-account-card.plan-team::after,
       .tier-badge.team::after {
         animation: none;
@@ -3845,6 +3904,7 @@ function planBadgeClass(plan) {
 
 function accountCardPlanClass(plan) {
   const value = String(plan || '').trim().toUpperCase();
+  if (value === 'PRO') return 'plan-pro';
   if (value === 'TEAM') return 'plan-team';
   return '';
 }
