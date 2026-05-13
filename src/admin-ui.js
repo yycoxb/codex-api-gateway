@@ -581,6 +581,16 @@ export function renderAdminHtml() {
       50% { opacity: .95; transform: translateX(18%); }
     }
 
+    @keyframes plus-card-aura {
+      0%, 100% { opacity: .56; transform: translate3d(0, 0, 0) scale(1); }
+      50% { opacity: .86; transform: translate3d(-2px, -1px, 0) scale(1.01); }
+    }
+
+    @keyframes plus-card-silver-line {
+      0%, 100% { opacity: .46; transform: translateX(18%); }
+      50% { opacity: .82; transform: translateX(-18%); }
+    }
+
     .strip-icon .icon-svg,
     .card-icon .icon-svg {
       width: 24px;
@@ -2490,6 +2500,53 @@ export function renderAdminHtml() {
         var(--shadow-md);
     }
 
+    .ghcp-account-card.plan-plus {
+      border-color: rgba(203, 213, 225, .34);
+      background:
+        radial-gradient(circle at 88% 8%, rgba(226, 232, 240, .15), transparent 30%),
+        radial-gradient(circle at 10% 96%, rgba(100, 116, 139, .12), transparent 38%),
+        linear-gradient(180deg, rgba(24, 25, 25, .95), rgba(11, 11, 10, .93));
+      box-shadow:
+        inset 0 1px 0 rgba(226, 232, 240, .08),
+        0 0 0 1px rgba(203, 213, 225, .06),
+        0 18px 44px rgba(0, 0, 0, .38);
+    }
+
+    .ghcp-account-card.plan-plus::before {
+      height: 2px;
+      background:
+        linear-gradient(90deg, transparent, rgba(248, 250, 252, .68), rgba(148, 163, 184, .62), rgba(226, 232, 240, .52), transparent);
+      opacity: .72;
+      animation: plus-card-silver-line 5.2s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.plan-plus:not(.api-using)::after {
+      content: '';
+      position: absolute;
+      z-index: 0;
+      inset: 0;
+      background:
+        linear-gradient(118deg, transparent 0 60%, rgba(226, 232, 240, .052) 62%, transparent 77%),
+        radial-gradient(circle at 80% 18%, rgba(248, 250, 252, .075), transparent 22%),
+        radial-gradient(circle at 28% 12%, rgba(148, 163, 184, .07), transparent 18%);
+      pointer-events: none;
+      animation: plus-card-aura 6s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.plan-plus > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .ghcp-account-card.plan-plus:hover {
+      border-color: rgba(226, 232, 240, .50);
+      box-shadow:
+        inset 0 1px 0 rgba(226, 232, 240, .12),
+        0 0 0 1px rgba(203, 213, 225, .10),
+        0 0 28px rgba(148, 163, 184, .12),
+        var(--shadow-md);
+    }
+
     .ghcp-account-card.plan-team {
       border-color: rgba(125, 211, 252, .38);
       background:
@@ -2873,6 +2930,8 @@ export function renderAdminHtml() {
       .tier-badge.pro::after,
       .ghcp-account-card.plan-pro::before,
       .ghcp-account-card.plan-pro::after,
+      .ghcp-account-card.plan-plus::before,
+      .ghcp-account-card.plan-plus::after,
       .ghcp-account-card.plan-team::after,
       .tier-badge.team::after {
         animation: none;
@@ -3905,6 +3964,7 @@ function planBadgeClass(plan) {
 function accountCardPlanClass(plan) {
   const value = String(plan || '').trim().toUpperCase();
   if (value === 'PRO') return 'plan-pro';
+  if (value === 'PLUS') return 'plan-plus';
   if (value === 'TEAM') return 'plan-team';
   return '';
 }
