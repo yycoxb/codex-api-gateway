@@ -609,6 +609,11 @@ export function renderAdminHtml() {
     .ghcp-account-card {
       height: var(--overview-card-height, 452px);
       min-height: var(--overview-card-height, 452px);
+      --card-light-x: 50%;
+      --card-light-y: 18%;
+      --card-light-opacity: 0;
+      --card-tilt-x: 0deg;
+      --card-tilt-y: 0deg;
       display: flex;
       flex-direction: column;
       gap: 16px;
@@ -2411,6 +2416,52 @@ export function renderAdminHtml() {
         var(--shadow-md);
     }
 
+    .ghcp-account-card.card-light-active {
+      transform:
+        perspective(900px)
+        rotateX(var(--card-tilt-y, 0deg))
+        rotateY(var(--card-tilt-x, 0deg))
+        translateY(-3px);
+    }
+
+    .card-light-follow {
+      position: absolute !important;
+      z-index: 0 !important;
+      inset: 0;
+      border-radius: inherit;
+      pointer-events: none;
+      opacity: var(--card-light-opacity, 0);
+      background:
+        radial-gradient(circle at var(--card-light-x, 50%) var(--card-light-y, 18%), rgba(255, 255, 255, .22), rgba(245, 208, 111, .12) 16%, rgba(255, 255, 255, .035) 31%, transparent 58%),
+        linear-gradient(115deg, transparent 0 58%, rgba(255, 255, 255, .055) 62%, transparent 78%);
+      mix-blend-mode: screen;
+      transition: opacity .24s ease;
+      will-change: opacity, background;
+    }
+
+    .ghcp-account-card.plan-pro .card-light-follow {
+      background:
+        radial-gradient(circle at var(--card-light-x, 50%) var(--card-light-y, 18%), rgba(255, 252, 215, .34), rgba(255, 214, 90, .20) 17%, rgba(245, 184, 46, .08) 34%, transparent 62%),
+        linear-gradient(115deg, transparent 0 56%, rgba(255, 232, 150, .075) 62%, transparent 79%);
+    }
+
+    .ghcp-account-card.plan-plus .card-light-follow {
+      background:
+        radial-gradient(circle at var(--card-light-x, 50%) var(--card-light-y, 18%), rgba(248, 250, 252, .28), rgba(203, 213, 225, .16) 18%, rgba(148, 163, 184, .06) 34%, transparent 62%),
+        linear-gradient(115deg, transparent 0 58%, rgba(226, 232, 240, .065) 62%, transparent 79%);
+    }
+
+    .ghcp-account-card.plan-team .card-light-follow {
+      background:
+        radial-gradient(circle at var(--card-light-x, 50%) var(--card-light-y, 18%), rgba(240, 249, 255, .30), rgba(125, 211, 252, .18) 18%, rgba(56, 189, 248, .07) 34%, transparent 62%),
+        linear-gradient(115deg, transparent 0 58%, rgba(186, 230, 253, .070) 62%, transparent 79%);
+    }
+
+    .ghcp-account-card > :not(.card-light-follow) {
+      position: relative;
+      z-index: 1;
+    }
+
     .ghcp-account-card.current {
       border-color: rgba(245, 208, 111, .74);
       box-shadow:
@@ -2935,6 +2986,12 @@ export function renderAdminHtml() {
       .ghcp-account-card.plan-team::after,
       .tier-badge.team::after {
         animation: none;
+      }
+      .ghcp-account-card.card-light-active {
+        transform: none;
+      }
+      .card-light-follow {
+        display: none;
       }
     }
   </style>
@@ -4230,6 +4287,49 @@ function applyApiRuntimeState(runtime) {
   });
 }
 
+function updateAccountCardLight(card, event) {
+  if (!card || !event) return;
+  const rect = card.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const x = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  const y = Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height));
+  const tiltX = ((x - 0.5) * 5.2).toFixed(2) + 'deg';
+  const tiltY = ((0.5 - y) * 4.2).toFixed(2) + 'deg';
+  card.style.setProperty('--card-light-x', (x * 100).toFixed(1) + '%');
+  card.style.setProperty('--card-light-y', (y * 100).toFixed(1) + '%');
+  card.style.setProperty('--card-light-opacity', '1');
+  card.style.setProperty('--card-tilt-x', tiltX);
+  card.style.setProperty('--card-tilt-y', tiltY);
+  card.classList.add('card-light-active');
+}
+
+function resetAccountCardLight(card) {
+  if (!card) return;
+  card.style.setProperty('--card-light-opacity', '0');
+  card.style.setProperty('--card-tilt-x', '0deg');
+  card.style.setProperty('--card-tilt-y', '0deg');
+  card.classList.remove('card-light-active');
+}
+
+function bindAccountCardLightFollow() {
+  const list = $('accountsList');
+  if (!list || list.dataset.cardLightBound === '1') return;
+  list.dataset.cardLightBound = '1';
+  list.addEventListener('pointermove', function(event) {
+    const card = event.target && event.target.closest ? event.target.closest('.ghcp-account-card.acct-card') : null;
+    if (!card || !list.contains(card)) return;
+    updateAccountCardLight(card, event);
+  });
+  list.addEventListener('pointerleave', function() {
+    list.querySelectorAll('.ghcp-account-card.card-light-active').forEach(resetAccountCardLight);
+  });
+  list.addEventListener('pointerout', function(event) {
+    const card = event.target && event.target.closest ? event.target.closest('.ghcp-account-card.acct-card') : null;
+    if (!card || !list.contains(card)) return;
+    if (!event.relatedTarget || !card.contains(event.relatedTarget)) resetAccountCardLight(card);
+  });
+}
+
 function renderApiPoolAccounts() {
   const box = $('apiPoolModalList');
   if (!box || !state.data) return;
@@ -4531,6 +4631,7 @@ function renderAccounts() {
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
     return '<section class="ghcp-account-card acct-card ' + accountCardPlanClass(plan) + ' ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
+      '<span class="card-light-follow" aria-hidden="true"></span>' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
         '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
@@ -5539,6 +5640,8 @@ $('clearWakeupStatusBtn').onclick = function() {
   $('wakeupStatusList').innerHTML = '<div class="empty-state">还没有运行唤醒任务。</div>';
 };
 $('toggleOutputBtn').onclick = function() { $('outputPanel').classList.remove('show'); };
+
+bindAccountCardLightFollow();
 
 loadState()
   .then(function() {
