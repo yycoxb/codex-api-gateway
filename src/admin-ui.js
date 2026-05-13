@@ -3590,6 +3590,36 @@ function accountDisplayNameById(accountId, fallbackEmail) {
   return maskEmail((found && found.email) || fallbackEmail || id || '-');
 }
 
+function resolveStatsAccount(item, byId, byEmail) {
+  item = item || {};
+  const id = String(item.accountId || item.account_id || '').trim();
+  const email = String(item.email || '').trim();
+  const accountById = id ? byId.get(id) : null;
+  if (accountById) {
+    return {
+      account: accountById,
+      match: 'id',
+      displayEmail: accountById.email || email || id,
+      staleEmail: email && accountById.email && email.toLowerCase() !== String(accountById.email).toLowerCase() ? email : null,
+    };
+  }
+  const accountByEmail = email ? byEmail.get(email.toLowerCase()) : null;
+  if (accountByEmail) {
+    return {
+      account: accountByEmail,
+      match: 'email',
+      displayEmail: accountByEmail.email || email,
+      staleEmail: null,
+    };
+  }
+  return {
+    account: null,
+    match: 'none',
+    displayEmail: email || id || '-',
+    staleEmail: null,
+  };
+}
+
 function strategyLabel(value) {
   switch (String(value || 'auto')) {
     case 'manual': return '手动优先';
@@ -4196,10 +4226,11 @@ function renderApiStatsPanel() {
     return;
   }
   accountList.innerHTML = rows.map(function(item) {
-    const account = byId.get(item.accountId) || byEmail.get(String(item.email || '').trim().toLowerCase()) || {};
+    const resolved = resolveStatsAccount(item, byId, byEmail);
+    const account = resolved.account || {};
     const usage = item.usage || {};
-    const email = item.email || account.email || item.accountId;
-    const plan = planLabel(account.planType);
+    const email = resolved.displayEmail;
+    const plan = resolved.account ? planLabel(account.planType) : '';
     const quota = account.quota || {};
     const quotaText = quota.weekly_percentage == null ? '' : '<span class="stats-pill">Weekly ' + escapeHtml(quota.weekly_percentage + '%') + '</span>';
     const failure = item.recentFailure || null;
@@ -4207,9 +4238,13 @@ function renderApiStatsPanel() {
       ? '<div class="stats-failure">最近失败：' + escapeHtml(statusCodeLabel(failure.statusCode)) + ' · ' + escapeHtml(failure.reason) + (failure.cooldownMs ? ' · 冷却 ' + escapeHtml(shortDurationText(failure.cooldownMs)) : '') + '</div>'
       : '';
     const statusPills = statusCodeEntries(usage.statusCodes).length ? statusCodePills(usage.statusCodes, 4) : '';
+    const staleText = resolved.staleEmail ? '<div class="stats-failure">已按当前账号信息校正：原统计邮箱 ' + escapeHtml(maskEmail(resolved.staleEmail)) + '</div>' : '';
+    const planBadge = plan
+      ? '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>'
+      : '<span class="stats-pill">历史账号</span>';
     return '<div class="stats-account-row">' +
-      '<div class="stats-account-main" title="' + escapeHtml(email) + '">' + escapeHtml(maskEmail(email)) + failureText + '</div>' +
-      '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
+      '<div class="stats-account-main" title="' + escapeHtml(email) + '">' + escapeHtml(maskEmail(email)) + staleText + failureText + '</div>' +
+      planBadge +
       quotaText +
       '<span class="stats-pill">成功 ' + compactNumber(usage.successCount || 0) + ' / 失败 ' + compactNumber(usage.failureCount || 0) + '</span>' +
       '<span class="stats-pill">' + compactNumber(usage.totalTokens || 0) + ' tokens</span>' +
