@@ -3973,6 +3973,21 @@ function accountRecentApiFailure(account) {
   return found;
 }
 
+function isAccountSpecificApiFailure(failure) {
+  if (!failure) return false;
+  const status = String(failure.statusCode || '').trim().toLowerCase();
+  const reason = String(failure.reason || '').trim().toLowerCase();
+  if (!status && !reason) return false;
+
+  if (status === 'cooldown' || status === 'network') return false;
+  if (/model cooldown active|upstream connection failed|fetch failed|network|socket|econn|etimedout|enotfound/i.test(reason)) return false;
+  if (/upstream temporarily unavailable|upstream timeout|temporarily unavailable/i.test(reason)) return false;
+  if (['408', '500', '502', '503', '504'].includes(status)) return false;
+
+  return /account|authorization|auth|token|refresh|credential|login|reauth|usage|quota|limit|401|403|429/i.test(reason)
+    || ['account', '401', '403', '429'].includes(status);
+}
+
 function accountStatusIssue(account) {
   if (!account) return null;
   if (account.requiresReauth) {
@@ -3991,7 +4006,7 @@ function accountStatusIssue(account) {
     };
   }
   const failure = accountRecentApiFailure(account);
-  if (failure && failure.reason) {
+  if (failure && failure.reason && isAccountSpecificApiFailure(failure)) {
     return {
       tone: 'warn',
       title: 'API 最近失败',
