@@ -2029,11 +2029,65 @@ export function renderAdminHtml() {
       font-weight: 800;
     }
 
+    .small-line.warn {
+      color: #b45309;
+      font-weight: 850;
+    }
+
+    .account-status-alert {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      min-width: 0;
+      padding: 8px 10px;
+      border-radius: 12px;
+      border: 1px solid rgba(245, 158, 11, .30);
+      background: linear-gradient(135deg, rgba(245, 158, 11, .14), rgba(251, 191, 36, .07));
+      color: #b45309;
+      font-size: 12px;
+      font-weight: 900;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
+    }
+
+    .account-status-alert.danger {
+      border-color: rgba(239, 68, 68, .32);
+      background: linear-gradient(135deg, rgba(239, 68, 68, .13), rgba(245, 158, 11, .06));
+      color: #b91c1c;
+    }
+
+    .account-status-alert .alert-detail {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text-secondary);
+      font-weight: 800;
+    }
+
+    .ghcp-account-card.account-stale {
+      height: auto;
+      min-height: var(--overview-card-height, 452px);
+      border-color: rgba(245, 158, 11, .45);
+      box-shadow:
+        var(--shadow-sm),
+        0 0 0 1px rgba(245, 158, 11, .09),
+        0 16px 34px rgba(245, 158, 11, .10);
+    }
+
+    .ghcp-account-card.account-stale .tier-badge {
+      filter: saturate(.86) brightness(.96);
+    }
+
     .ghcp-quota-section {
       display: flex;
       flex-direction: column;
       gap: 14px;
       min-height: 124px;
+    }
+
+    .ghcp-quota-section.stale .quota-item {
+      opacity: .58;
+      filter: saturate(.75);
     }
 
     .quota-item {
@@ -3532,6 +3586,15 @@ function escapeHtml(value) {
   });
 }
 
+function safeIssueText(value, limit) {
+  limit = Number(limit || 120);
+  return String(value || '')
+    .replace(/Bearer\s+[A-Za-z0-9._~+/=-]+/ig, 'Bearer [redacted]')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/ig, 'sk-[redacted]')
+    .replace(/[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}/g, '[jwt-redacted]')
+    .slice(0, limit);
+}
+
 function maskMiddle(value, start, end) {
   value = String(value || '');
   if (value.length <= start + end) return value.charAt(0) + '***';
@@ -3882,21 +3945,89 @@ function quotaWindows(account) {
   return windows;
 }
 
+function accountRecentApiFailure(account) {
+  if (!account || !state.data) return null;
+  const stats = state.data.localAccessStats || {};
+  const groups = [
+    stats.accounts,
+    stats.daily && stats.daily.accounts,
+    stats.weekly && stats.weekly.accounts,
+    stats.monthly && stats.monthly.accounts,
+  ].filter(Array.isArray);
+  const accountId = String(account.id || '').trim();
+  const email = String(account.email || '').trim().toLowerCase();
+  let found = null;
+  groups.forEach(function(items) {
+    items.forEach(function(item) {
+      const itemId = String(item.accountId || item.account_id || '').trim();
+      const itemEmail = String(item.email || '').trim().toLowerCase();
+      if (accountId && itemId && itemId !== accountId) return;
+      if (!itemId && email && itemEmail && itemEmail !== email) return;
+      if (!item.recentFailure) return;
+      const timestamp = Number(item.recentFailure.timestamp || item.updatedAt || 0);
+      if (!found || timestamp >= Number(found.timestamp || 0)) {
+        found = { ...item.recentFailure, timestamp: timestamp };
+      }
+    });
+  });
+  return found;
+}
+
+function accountStatusIssue(account) {
+  if (!account) return null;
+  if (account.requiresReauth) {
+    return {
+      tone: 'danger',
+      title: '授权需要重新登录',
+      detail: safeIssueText(account.reauthReason || 'token refresh failed'),
+    };
+  }
+  const quotaError = account.quotaError || account.quota_error || null;
+  if (quotaError) {
+    return {
+      tone: 'warn',
+      title: '用量验证失败',
+      detail: safeIssueText(quotaError.message || quotaError.error || quotaError.reason || '状态待验证'),
+    };
+  }
+  const failure = accountRecentApiFailure(account);
+  if (failure && failure.reason) {
+    return {
+      tone: 'warn',
+      title: 'API 最近失败',
+      detail: safeIssueText(statusCodeLabel(failure.statusCode) + ' · ' + failure.reason),
+    };
+  }
+  return null;
+}
+
+function accountStatusAlertHtml(account) {
+  const issue = accountStatusIssue(account);
+  if (!issue) return '';
+  return '<div class="account-status-alert ' + escapeHtml(issue.tone || 'warn') + '" title="' + escapeHtml(issue.detail || '') + '">' +
+    '<span>⚠ ' + escapeHtml(issue.title) + '</span>' +
+    (issue.detail ? '<span class="alert-detail">' + escapeHtml(issue.detail) + '</span>' : '') +
+  '</div>';
+}
+
 function quotaSectionHtml(account) {
   const plan = planLabel(account && account.planType);
   const windows = quotaWindows(account);
+  const stale = Boolean(accountStatusIssue(account));
   const hasHourly = windows.some(function(item) { return item.kind === 'hourly'; });
   const hasWeekly = windows.some(function(item) { return item.kind === 'weekly'; });
   const parts = windows.map(function(item) {
     return quotaBlock(item.kind, item.label, item.percent, item.reset);
   });
-  if (!parts.length) {
+  if (stale && parts.length) {
+    parts.unshift('<div class="small-line warn">下面额度是上次成功刷新缓存，当前状态待验证</div>');
+  } else if (!parts.length) {
     parts.push('<div class="small-line">未获得用量信息</div>');
   } else if (plan !== 'FREE') {
     if (!hasHourly) parts.push('<div class="small-line">未获得 5h 用量信息</div>');
     if (!hasWeekly) parts.push('<div class="small-line">未获得 Weekly 用量信息</div>');
   }
-  return '<div class="ghcp-quota-section">' + parts.join('') + '</div>';
+  return '<div class="ghcp-quota-section ' + (stale ? 'stale' : '') + '">' + parts.join('') + '</div>';
 }
 
 function quotaSummaryText(account) {
@@ -4719,7 +4850,8 @@ function renderAccounts() {
     const selected = state.selectedWakeupIds.has(account.id);
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
-    return '<section class="ghcp-account-card acct-card ' + accountCardPlanClass(plan) + ' ' + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
+    const statusIssue = Boolean(accountStatusIssue(account));
+    return '<section class="ghcp-account-card acct-card ' + accountCardPlanClass(plan) + ' ' + (statusIssue ? 'account-stale ' : '') + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
       '<span class="card-light-follow" aria-hidden="true"></span>' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
@@ -4729,6 +4861,7 @@ function renderAccounts() {
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
         '<div class="small-line">使用 ' + escapeHtml(loginLabel(account)) + ' 登录 | 用户 ID: ' + escapeHtml(maskId(account.userId || account.accountId)) + '</div>' +
       '</div>' +
+      accountStatusAlertHtml(account) +
       quotaSectionHtml(account) +
       subscriptionBox(account) +
       '<div class="card-footer">' +
