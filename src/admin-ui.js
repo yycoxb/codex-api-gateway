@@ -3988,6 +3988,21 @@ function isAccountSpecificApiFailure(failure) {
     || ['account', '401', '403', '429'].includes(status);
 }
 
+function isAccountSpecificQuotaError(quotaError) {
+  if (!quotaError) return false;
+  const status = String(quotaError.statusCode || quotaError.status_code || quotaError.code || '').trim().toLowerCase();
+  const message = String(quotaError.message || quotaError.error || quotaError.reason || '').trim().toLowerCase();
+  if (!status && !message) return false;
+
+  if (status === 'network') return false;
+  if (['408', '500', '502', '503', '504'].includes(status)) return false;
+  if (/fetch failed|failed to fetch|network|socket|econn|etimedout|enotfound|eai_again|timeout|aborted/i.test(message)) return false;
+  if (/用量接口返回\s*(408|5\d\d)|http\s*(408|5\d\d)|\b(408|500|502|503|504)\b/i.test(message) && !/(401|403|429)/.test(message)) return false;
+
+  return /account|authorization|auth|token|credential|login|reauth|usage_limit|rate_limit|quota|limit|401|403|429|账号|授权|登录|令牌|额度|限制|过期|失效|无效/i.test(message)
+    || ['account', '401', '403', '429'].includes(status);
+}
+
 function accountStatusIssue(account) {
   if (!account) return null;
   if (account.requiresReauth) {
@@ -3998,7 +4013,7 @@ function accountStatusIssue(account) {
     };
   }
   const quotaError = account.quotaError || account.quota_error || null;
-  if (quotaError) {
+  if (quotaError && isAccountSpecificQuotaError(quotaError)) {
     return {
       tone: 'warn',
       title: '用量验证失败',
