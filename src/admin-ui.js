@@ -4157,6 +4157,66 @@ function responseAffinityText(info) {
   return parts.join(' · ');
 }
 
+function routingAttemptAccountId(attempt) {
+  return String((attempt && (attempt.accountId || attempt.account?.id)) || '').trim();
+}
+
+function routingAttemptLabel(attempt) {
+  const account = (attempt && attempt.account) || {};
+  const label = accountDisplayNameById(routingAttemptAccountId(attempt), attempt?.email || account.email);
+  const status = statusCodeLabel(attempt && attempt.statusCode);
+  const reason = attempt && attempt.reason ? '，' + attempt.reason : '';
+  const cooldown = attempt && attempt.cooldownMs ? '，冷却 ' + shortDurationText(attempt.cooldownMs) : '';
+  return label + '（' + status + reason + cooldown + '）';
+}
+
+function runtimeRouteReasonText(runtime, visualAccount) {
+  runtime = runtime || {};
+  const request = runtime.currentRequest || runtime.lastRequest || {};
+  const routing = request.routing || {};
+  const affinity = request.responseAffinity || routing.responseAffinity || null;
+  const accountId = String(visualAccount && visualAccount.id || '').trim();
+  const local = (state.data && state.data.localAccess) || {};
+  const localIds = selectedApiAccountIds();
+  const firstId = localIds[0] || null;
+  const strategy = String(local.routingStrategy || 'auto');
+
+  if (affinity && affinity.requested && affinity.matched) {
+    const binding = affinity.binding || {};
+    const boundAccount = binding.account || {};
+    const boundId = String(binding.accountId || boundAccount.id || accountId || '').trim();
+    const label = accountDisplayNameById(boundId, boundAccount.email || (visualAccount && visualAccount.email));
+    return '会话绑定：本次请求带 previous_response_id，为避免上下文断链，优先使用 ' + label;
+  }
+
+  const attempts = Array.isArray(routing.attempts) ? routing.attempts : [];
+  const successIndex = attempts.findIndex(function(attempt) {
+    if (!attempt || attempt.success !== true) return false;
+    if (!accountId) return true;
+    return routingAttemptAccountId(attempt) === accountId;
+  });
+  if (successIndex > 0) {
+    const skipped = attempts.slice(0, successIndex).filter(Boolean).slice(0, 3).map(routingAttemptLabel);
+    const current = accountDisplayNameById(accountId, visualAccount && visualAccount.email);
+    return '已 fallback：' + skipped.join('；') + '，当前由 ' + current + ' 承接';
+  }
+
+  if (accountId && firstId && firstId !== accountId && strategy !== 'manual') {
+    return '当前策略是“' + strategyLabel(strategy) + '”，请求时会按策略重排账号，不一定使用列表首位';
+  }
+
+  if (accountId && firstId && firstId !== accountId) {
+    return '当前账号不是列表首位：通常是会话绑定、冷却或 fallback 导致，可展开诊断详情查看链路';
+  }
+
+  return '';
+}
+
+function runtimeRouteReasonHtml(runtime, visualAccount) {
+  const text = runtimeRouteReasonText(runtime, visualAccount);
+  return text ? '<div class="diagnostic-line warn">' + escapeHtml(text) + '</div>' : '';
+}
+
 function runtimeCooldownHtml(runtime) {
   const cooldowns = Array.isArray(runtime && runtime.cooldowns) ? runtime.cooldowns : [];
   if (!cooldowns.length) return '';
@@ -4215,6 +4275,10 @@ function requestSummaryTags(request) {
   if (body.model) tags.push(String(body.model));
   const effort = body['reasoning.effort'] || body.reasoning_effort || body.effort;
   if (effort) tags.push(String(effort));
+  const affinity = request.responseAffinity || (request.routing && request.routing.responseAffinity) || null;
+  if (affinity && affinity.requested && affinity.matched) tags.push('会话绑定');
+  const attempts = Array.isArray(request.routing && request.routing.attempts) ? request.routing.attempts : [];
+  if (attempts.some(function(attempt) { return attempt && attempt.success !== true; }) && attempts.some(function(attempt) { return attempt && attempt.success === true; })) tags.push('fallback');
   const rewrite = String(body['gateway.service_tier_rewrite'] || '');
   const mode = String(body['gateway.service_tier_mode'] || '');
   const tier = String(body.service_tier || '');
@@ -4259,7 +4323,7 @@ function renderLocalAccessRuntime() {
     const runningText = started ? (' · 已运行 ' + durationText(Date.now() - started)) : '';
     const tags = requestSummaryTags(runtime.currentRequest);
     const tagText = tags.length ? ' · ' + escapeHtml(tags.join(' · ')) : '';
-    box.innerHTML = '<div class="runtime-main">API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + tagText + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + '</div>' + requestDiagnosticsHtml(runtime.currentRequest) + runtimeCooldownHtml(runtime);
+    box.innerHTML = '<div class="runtime-main">API 正在使用：<b>' + escapeHtml(maskEmail(activeAccount.email || activeAccount.id)) + '</b>' + tagText + runningText + (activeCount > 1 ? ' · 并发 ' + activeCount + ' 个请求' : '') + '</div>' + runtimeRouteReasonHtml(runtime, activeAccount) + requestDiagnosticsHtml(runtime.currentRequest) + runtimeCooldownHtml(runtime);
     box.classList.add('show');
     bindRuntimeDiagnosticsToggle(box);
     return;
@@ -4271,7 +4335,7 @@ function renderLocalAccessRuntime() {
     const recentActive = !!recentAccount;
     const prefix = recentActive ? 'API 刚刚使用：' : '最近 API 使用：';
     const tail = recentActive ? ' · 保持高亮中' : (' · ' + escapeHtml(finished));
-    box.innerHTML = '<div class="runtime-main">' + prefix + '<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + tail + '</div>' + requestDiagnosticsHtml(runtime.lastRequest) + runtimeCooldownHtml(runtime);
+    box.innerHTML = '<div class="runtime-main">' + prefix + '<b>' + escapeHtml(maskEmail(lastAccount.email || lastAccount.id)) + '</b>' + tagText + tail + '</div>' + runtimeRouteReasonHtml(runtime, lastAccount) + requestDiagnosticsHtml(runtime.lastRequest) + runtimeCooldownHtml(runtime);
     box.classList.add('show');
     bindRuntimeDiagnosticsToggle(box);
     return;
