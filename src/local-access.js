@@ -8,6 +8,7 @@ const DEFAULT_LOCAL_ACCESS = {
   enabled: true,
   accountIds: [],
   routingStrategy: 'auto',
+  customRoutingRules: [],
   serviceTierMode: 'normal',
   restrictFreeAccounts: true,
   createdAt: 0,
@@ -18,6 +19,7 @@ const STRATEGIES = new Set([
   'auto',
   'manual',
   'round_robin',
+  'custom',
   'quota_high_first',
   'quota_low_first',
   'expiry_soon_first',
@@ -33,6 +35,13 @@ const SERVICE_TIER_MODES = new Set([
 ]);
 
 let roundRobinCursor = 0;
+let customRoutingCursor = 0;
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
+}
 
 function normalizeAccountIds(accountIds, validIds) {
   const seen = new Set();
@@ -50,7 +59,26 @@ function normalizeAccountIds(accountIds, validIds) {
 function normalizeRoutingStrategy(value) {
   const raw = String(value || DEFAULT_LOCAL_ACCESS.routingStrategy).trim().toLowerCase();
   if (raw === 'ordered' || raw === 'priority' || raw === 'manual_first') return 'manual';
+  if (raw === 'weighted' || raw === 'custom_weighted' || raw === 'priority_weight') return 'custom';
   return STRATEGIES.has(raw) ? raw : DEFAULT_LOCAL_ACCESS.routingStrategy;
+}
+
+function normalizeCustomRoutingRules(value, validIds = null) {
+  const rules = Array.isArray(value) ? value : [];
+  const seen = new Set();
+  const normalized = [];
+  for (const item of rules) {
+    const accountId = String(item?.accountId || item?.account_id || item?.id || '').trim();
+    if (!accountId || seen.has(accountId)) continue;
+    if (validIds && !validIds.has(accountId)) continue;
+    seen.add(accountId);
+    normalized.push({
+      accountId,
+      priority: clampNumber(item?.priority, 0, 100, 50),
+      weight: clampNumber(item?.weight, 1, 100, 1),
+    });
+  }
+  return normalized;
 }
 
 function normalizeServiceTierMode(value) {
@@ -70,6 +98,7 @@ function normalizeLocalAccess(raw) {
     enabled: raw?.enabled !== false,
     accountIds: normalizeAccountIds(raw?.accountIds),
     routingStrategy: normalizeRoutingStrategy(raw?.routingStrategy),
+    customRoutingRules: normalizeCustomRoutingRules(raw?.customRoutingRules || raw?.custom_routing_rules),
     serviceTierMode: normalizeServiceTierMode(raw?.serviceTierMode || raw?.speedMode),
     restrictFreeAccounts: hasRestrictFreeAccounts ? raw.restrictFreeAccounts !== false : DEFAULT_LOCAL_ACCESS.restrictFreeAccounts,
     createdAt: Number(raw?.createdAt || now),
@@ -224,8 +253,13 @@ export async function saveLocalAccessConfig(payload = {}) {
     routingStrategy: normalizeRoutingStrategy(payload.routingStrategy ?? current.routingStrategy),
     serviceTierMode: normalizeServiceTierMode(payload.serviceTierMode ?? payload.speedMode ?? current.serviceTierMode),
     accountIds: normalizeAccountIds(payload.accountIds ?? current.accountIds, validIds),
+    customRoutingRules: normalizeCustomRoutingRules(
+      payload.customRoutingRules ?? payload.custom_routing_rules ?? current.customRoutingRules,
+      validIds,
+    ),
     updatedAt: nowMs(),
   });
+  next.customRoutingRules = normalizeCustomRoutingRules(next.customRoutingRules, new Set(next.accountIds));
   await writeJson(LOCAL_ACCESS_PATH, next);
   return next;
 }
@@ -248,12 +282,54 @@ export async function getProxyAccountIds() {
   return ids;
 }
 
-export function orderAccountIdsForRequest(ids, strategy = 'auto', accounts = []) {
+function weightedCustomOrder(list, customRoutingRules = []) {
+  const rulesById = new Map(normalizeCustomRoutingRules(customRoutingRules)
+    .map((rule) => [rule.accountId, rule]));
+  const groups = new Map();
+  list.forEach((id, originalIndex) => {
+    const rule = rulesById.get(id) || {};
+    const priority = clampNumber(rule.priority, 0, 100, 50);
+    const weight = clampNumber(rule.weight, 1, 100, 1);
+    if (!groups.has(priority)) groups.set(priority, []);
+    groups.get(priority).push({ id, originalIndex, weight });
+  });
+
+  const output = [];
+  const priorities = Array.from(groups.keys()).sort((left, right) => right - left);
+  for (const priority of priorities) {
+    const group = groups.get(priority) || [];
+    if (group.length <= 1) {
+      output.push(...group.map((item) => item.id));
+      continue;
+    }
+
+    const expanded = [];
+    for (const item of group) {
+      for (let i = 0; i < item.weight; i += 1) expanded.push(item.id);
+    }
+    const start = customRoutingCursor++ % expanded.length;
+    const seen = new Set();
+    for (let offset = 0; offset < expanded.length; offset += 1) {
+      const id = expanded[(start + offset) % expanded.length];
+      if (seen.has(id)) continue;
+      seen.add(id);
+      output.push(id);
+      if (seen.size >= group.length) break;
+    }
+    for (const item of group.sort((left, right) => left.originalIndex - right.originalIndex)) {
+      if (!seen.has(item.id)) output.push(item.id);
+    }
+  }
+  return output;
+}
+
+export function orderAccountIdsForRequest(ids, strategy = 'auto', accounts = [], customRoutingRules = []) {
   const list = normalizeAccountIds(ids);
   if (list.length <= 1) return list;
 
   const normalizedStrategy = normalizeRoutingStrategy(strategy);
   if (normalizedStrategy === 'manual') return list;
+  if (normalizedStrategy === 'custom') return weightedCustomOrder(list, customRoutingRules);
 
   const start = roundRobinCursor++ % list.length;
   const ordered = [];
@@ -283,5 +359,5 @@ export async function getProxyAccountIdsForRequest() {
   const config = await loadLocalAccessConfig();
   const accountStore = await loadAccountStore();
   const ids = await getProxyAccountIds();
-  return orderAccountIdsForRequest(ids, config.routingStrategy, accountStore.accounts);
+  return orderAccountIdsForRequest(ids, config.routingStrategy, accountStore.accounts, config.customRoutingRules);
 }

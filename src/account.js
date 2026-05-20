@@ -161,6 +161,7 @@ function normalizeImportFormat(format) {
   if (raw === 'cockpit' || raw === 'cockpit-tools') return 'cockpit-tools';
   if (raw === 'sub2api') return 'sub2api';
   if (raw === 'cpa' || raw === 'token-storage') return 'cpa';
+  if (raw === 'session' || raw === 'codex-session' || raw === 'chatgpt-session') return 'codex-session';
   throw new Error(`不支持的导入格式: ${format}`);
 }
 
@@ -780,7 +781,7 @@ function accountFromAuthObject(auth, importedFrom = 'json') {
   }
 
   const tokenInfo = extractAuthInfo(tokens);
-  const email = auth.email || extractEmail(tokens.id_token);
+  const email = auth.email || emailFromTokens(tokens) || extractEmail(tokens.id_token);
   const accountId = auth.accountId || auth.account_id || tokens.account_id || extractAccountId(tokens.access_token, tokens.id_token) || null;
   const account = {
     id: auth.id || buildAccountId({ email, accountId, idToken: tokens.id_token, accessToken: tokens.access_token }),
@@ -842,12 +843,60 @@ function looksLikeCpaTokenStorage(item) {
   );
 }
 
+function sessionAccessToken(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const tokens = value.tokens && typeof value.tokens === 'object' ? value.tokens : {};
+  return normalizeOptional(value.accessToken || value.access_token || tokens.access_token || tokens.accessToken);
+}
+
+function unwrapCodexSessionValue(value, depth = 0) {
+  if (depth > 4 || value === undefined || value === null) return null;
+  if (typeof value === 'string') {
+    const text = value.trim();
+    if (!text) return null;
+    try {
+      return unwrapCodexSessionValue(JSON.parse(text), depth + 1);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (looksLikeCodexSessionObject(value)) return value;
+  for (const key of ['session', 'session_json', 'sessionJson', 'codexSession', 'codex_session', 'chatgptSession', 'chatgpt_session', 'data']) {
+    if (Object.prototype.hasOwnProperty.call(value, key)) {
+      const nested = unwrapCodexSessionValue(value[key], depth + 1);
+      if (nested) return nested;
+    }
+  }
+  return null;
+}
+
+function looksLikeCodexSessionObject(value) {
+  const accessToken = sessionAccessToken(value);
+  if (!accessToken || !decodeJwtPayload(accessToken)) return false;
+  return Boolean(
+    value.user ||
+    value.expires ||
+    value.expiresAt ||
+    value.sessionToken ||
+    value.session_token ||
+    value.authProvider ||
+    value.auth_provider ||
+    value.account
+  );
+}
+
+function looksLikeCodexSessionValue(value) {
+  return Boolean(unwrapCodexSessionValue(value));
+}
+
 function detectImportFormat(parsed, requestedFormat) {
   if (requestedFormat !== 'auto') return requestedFormat;
   if (parsed?.type === 'sub2api-data') return 'sub2api';
   if (parsed?.schema === 'codex-api-gateway.accounts') return 'gateway';
   const items = rawImportItems(parsed);
   const sample = items.find(Boolean);
+  if (looksLikeCodexSessionValue(sample)) return 'codex-session';
   if (looksLikeSub2apiAccount(sample)) return 'sub2api';
   if (looksLikeCpaTokenStorage(sample)) return 'cpa';
   return 'gateway';
@@ -888,7 +937,71 @@ function normalizeCpaImportItem(item) {
   });
 }
 
+function normalizeCodexSessionImportItem(item) {
+  const session = unwrapCodexSessionValue(item);
+  if (!session) return null;
+  const accessToken = sessionAccessToken(session);
+  const tokens = session.tokens && typeof session.tokens === 'object' ? session.tokens : {};
+  const idToken = normalizeOptional(session.idToken || session.id_token || tokens.id_token || accessToken);
+  const refreshToken = normalizeOptional(session.refreshToken || session.refresh_token || tokens.refresh_token);
+  const account = session.account && typeof session.account === 'object' ? session.account : {};
+  const user = session.user && typeof session.user === 'object' ? session.user : {};
+  const accessPayload = decodeJwtPayload(accessToken) || {};
+  const profile = accessPayload['https://api.openai.com/profile'] || {};
+  const accountId = normalizeOptional(
+    session.accountId ||
+    session.account_id ||
+    account.id ||
+    account.accountId ||
+    account.account_id ||
+    extractAccountId(accessToken, idToken)
+  );
+  const email = normalizeOptional(
+    session.email ||
+    user.email ||
+    account.email ||
+    profile.email ||
+    emailFromTokens({ access_token: accessToken, id_token: idToken })
+  );
+  const planType = normalizeOptional(
+    session.planType ||
+    session.plan_type ||
+    account.planType ||
+    account.plan_type ||
+    account.plan ||
+    accessPayload['https://api.openai.com/auth']?.chatgpt_plan_type
+  );
+  const subscriptionActiveUntil = normalizeOptional(
+    session.subscriptionActiveUntil ||
+    session.subscription_active_until ||
+    account.subscriptionActiveUntil ||
+    account.subscription_active_until ||
+    account.subscription_expires_at ||
+    account.expires
+  );
+  return compactObject({
+    email: email || undefined,
+    account_id: accountId || undefined,
+    user_id: normalizeOptional(session.userId || session.user_id || user.id || user.sub) || undefined,
+    account_name: normalizeOptional(session.accountName || session.account_name || account.name || account.accountName || account.account_name) || undefined,
+    account_structure: normalizeOptional(session.accountStructure || session.account_structure || account.structure || account.account_structure) || undefined,
+    auth_provider: normalizeOptional(session.authProvider || session.auth_provider) || undefined,
+    plan_type: planType || undefined,
+    subscription_active_until: subscriptionActiveUntil || undefined,
+    subscription_plan_type: subscriptionActiveUntil ? (planType || undefined) : undefined,
+    token_updated_at: normalizeOptional(session.updatedAt || session.updated_at) || undefined,
+    auth_mode: 'oauth',
+    tokens: {
+      id_token: idToken,
+      access_token: accessToken,
+      refresh_token: refreshToken,
+    },
+  });
+}
+
 function normalizeImportItem(item, importFormat) {
+  const sessionItem = normalizeCodexSessionImportItem(item);
+  if (sessionItem) return sessionItem;
   if (importFormat === 'sub2api') return normalizeSub2apiImportItem(item);
   if (importFormat === 'cpa') return normalizeCpaImportItem(item);
   return item;

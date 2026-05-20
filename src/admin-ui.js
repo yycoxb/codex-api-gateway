@@ -1253,6 +1253,46 @@ export function renderAdminHtml() {
       transform: none;
     }
 
+    .compact-select {
+      width: auto;
+      min-width: 168px;
+      min-height: 34px;
+      padding: 0 10px;
+      border-radius: 12px;
+      font-weight: 850;
+    }
+
+    .api-route-controls {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 6px;
+      border: 1px solid rgba(37, 99, 235, .18);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .56);
+    }
+
+    .api-route-control {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-muted);
+      font-size: 11px;
+      font-weight: 950;
+      white-space: nowrap;
+    }
+
+    .api-route-controls input {
+      width: 54px;
+      min-height: 26px;
+      padding: 0 6px;
+      border: 1px solid var(--border-light);
+      border-radius: 9px;
+      background: rgba(255, 255, 255, .92);
+      color: var(--text-primary);
+      font-weight: 900;
+    }
+
     .api-pool-actions {
       display: flex;
       align-items: center;
@@ -1709,6 +1749,30 @@ export function renderAdminHtml() {
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+
+    .api-health-result {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border: 1px solid rgba(37, 99, 235, .18);
+      border-radius: 16px;
+      background: rgba(37, 99, 235, .06);
+      color: var(--text-secondary);
+      font-size: 12px;
+      font-weight: 850;
+      line-height: 1.55;
+    }
+
+    .api-health-result.ok {
+      border-color: rgba(16, 185, 129, .28);
+      background: rgba(16, 185, 129, .08);
+      color: #047857;
+    }
+
+    .api-health-result.fail {
+      border-color: rgba(239, 68, 68, .28);
+      background: rgba(239, 68, 68, .08);
+      color: #b91c1c;
     }
 
     .stats-account-list {
@@ -3332,7 +3396,7 @@ export function renderAdminHtml() {
         </section>
 
         <section class="account-add-section" id="addSectionToken">
-          <p class="section-desc">粘贴另一个账号的 ~/.codex/auth.json、Gateway / Cockpit / sub2api / CPA 导出的账号 JSON。请不要粘贴无 refresh_token 的网页会话凭证作为长期账号。</p>
+          <p class="section-desc">粘贴另一个账号的 ~/.codex/auth.json、Gateway / Cockpit / sub2api / CPA 导出的账号 JSON，或 ChatGPT/Codex session JSON。请不要粘贴无 refresh_token 的网页会话凭证作为长期账号。</p>
           <div>
             <label class="form-label" for="importFormatSelect">导入格式</label>
             <select class="input" id="importFormatSelect">
@@ -3341,9 +3405,10 @@ export function renderAdminHtml() {
               <option value="cockpit-tools">cockpit-tools</option>
               <option value="sub2api">sub2api</option>
               <option value="cpa">cpa / token storage</option>
+              <option value="codex-session">ChatGPT/Codex session JSON</option>
             </select>
           </div>
-          <div class="import-format-help" id="importFormatHelp">自动识别：按 JSON 结构判断 gateway、cockpit-tools、sub2api 或 cpa。</div>
+          <div class="import-format-help" id="importFormatHelp">自动识别：按 JSON 结构判断 gateway、cockpit-tools、sub2api、cpa 或 ChatGPT/Codex session JSON。</div>
           <textarea id="authJsonInput" class="import-textarea" placeholder="把账号 JSON 粘贴到这里"></textarea>
           <div class="inline-actions">
             <button class="primary" id="importJsonBtn">导入粘贴内容</button>
@@ -3399,10 +3464,20 @@ export function renderAdminHtml() {
       <div class="modal-body">
         <div class="modal-toolbar">
           <input id="apiPoolSearch" type="search" placeholder="搜索账号..." />
+          <label class="modal-toggle">路由
+            <select class="input compact-select" id="apiRoutingStrategy">
+              <option value="auto">自动（套餐/额度）</option>
+              <option value="manual">手动优先</option>
+              <option value="custom">自定义 priority / weight</option>
+              <option value="round_robin">轮询</option>
+              <option value="plan_high_first">高套餐优先</option>
+              <option value="quota_high_first">高额度优先</option>
+            </select>
+          </label>
           <label class="modal-toggle"><input type="checkbox" id="apiRestrictFreeAccounts" checked /> 限制 Free 账号使用</label>
           <span class="selected-pill"><b id="apiModalSelectedCount">0</b> 已选</span>
         </div>
-        <div class="api-pool-hint">已选账号按列表顺序优先使用：第 1 个先试；失败、限额或冷却时再尝试下一个。</div>
+        <div class="api-pool-hint">手动优先按列表顺序尝试；自定义路由会先按 priority 高低分组，同组按 weight 轮转首选账号。</div>
         <div class="api-pool-list" id="apiPoolModalList"></div>
         <div class="api-pool-hint" id="apiPoolHint">这里的选择只影响 API 服务账号池；不会切换 Codex App。</div>
       </div>
@@ -3423,6 +3498,7 @@ export function renderAdminHtml() {
           <div class="api-pool-hint" id="apiStatsSubtitle">运行中 · 仅 Codex 访问</div>
         </div>
         <div class="stats-header-actions">
+          <button class="icon-btn" id="apiHealthCheckBtn" title="真实 API 健康检查">${icons.activity}</button>
           <button class="icon-btn" id="apiStatsRefreshBtn" title="刷新统计">${icons.refresh}</button>
           <button class="icon-btn danger" id="apiStatsClearBtn" title="清除统计">${icons.trash}</button>
           <button class="icon-btn" id="apiStatsModalCloseBtn" title="关闭">&times;</button>
@@ -3497,6 +3573,7 @@ export function renderAdminHtml() {
               <div class="stats-config-value">仅监听 127.0.0.1</div>
             </div>
           </div>
+          <div class="api-health-result" id="apiHealthResult">点击右上角心跳按钮，会通过真实 /v1/responses 上游请求检查 API/CLI 可用性（只发极短 OK 请求）。</div>
         </section>
 
         <section class="stats-section">
@@ -3531,6 +3608,10 @@ const state = {
   apiModalOpen: false,
   apiPoolQuery: '',
   apiRestrictFreeAccounts: true,
+  apiRoutingStrategy: 'manual',
+  apiCustomRules: {},
+  apiHealthBusy: false,
+  apiHealthResult: null,
   selectionInitialized: false,
   apiSelectionInitialized: false,
   lastWakeupResult: null,
@@ -3554,11 +3635,12 @@ const state = {
 const $ = (id) => document.getElementById(id);
 
 const importFormatHelpText = {
-  auto: '自动识别：按 JSON 结构判断 gateway、cockpit-tools、sub2api 或 cpa。',
+  auto: '自动识别：按 JSON 结构判断 gateway、cockpit-tools、sub2api、cpa 或 ChatGPT/Codex session JSON。',
   gateway: 'gateway：本项目原生迁移包，包含 accounts 字段。',
   'cockpit-tools': 'cockpit-tools：Cockpit Tools 兼容的账号对象或账号数组。',
   sub2api: 'sub2api：读取 accounts[].credentials 中的 OAuth tokens 与账号元数据。',
-  cpa: 'cpa：读取 CPA / Codex token storage 的根级 id_token、access_token、refresh_token。'
+  cpa: 'cpa：读取 CPA / Codex token storage 的根级 id_token、access_token、refresh_token。',
+  'codex-session': 'session JSON：读取 ChatGPT/Codex session/accessToken 结构；缺少 refresh_token 时只能作为短期账号使用。'
 };
 
 const exportFormatHelpText = {
@@ -3888,6 +3970,7 @@ function strategyLabel(value) {
     case 'plan_high_first': return '高套餐优先';
     case 'plan_low_first': return '低套餐优先';
     case 'round_robin': return '轮询';
+    case 'custom': return '自定义路由';
     default: return '自动';
   }
 }
@@ -4213,6 +4296,42 @@ function apiAccountById() {
   return map;
 }
 
+function clampRouteNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function normalizeApiCustomRules(rules) {
+  const output = {};
+  (Array.isArray(rules) ? rules : []).forEach(function(rule) {
+    if (!rule || typeof rule !== 'object') return;
+    const accountId = String(rule.accountId || rule.account_id || rule.id || '').trim();
+    if (!accountId) return;
+    output[accountId] = {
+      priority: clampRouteNumber(rule.priority, 0, 100, 50),
+      weight: clampRouteNumber(rule.weight, 1, 100, 1)
+    };
+  });
+  return output;
+}
+
+function apiRouteRule(accountId) {
+  const id = String(accountId || '').trim();
+  const rule = (state.apiCustomRules && state.apiCustomRules[id]) || {};
+  return {
+    priority: clampRouteNumber(rule.priority, 0, 100, 50),
+    weight: clampRouteNumber(rule.weight, 1, 100, 1)
+  };
+}
+
+function selectedApiCustomRoutingRules(ids) {
+  return (ids || selectedApiModalAccountIds()).map(function(id) {
+    const rule = apiRouteRule(id);
+    return { accountId: id, priority: rule.priority, weight: rule.weight };
+  });
+}
+
 function syncApiSelectionControls() {
   document.querySelectorAll('[data-api-modal-select]').forEach(function(item) {
     item.checked = state.apiModalIds.has(item.value);
@@ -4223,16 +4342,21 @@ function syncApiSelectionControls() {
   if ($('apiModalSelectedCount')) $('apiModalSelectedCount').textContent = String(modalCount);
   if ($('apiPoolCount')) $('apiPoolCount').textContent = String(selectedApiAccountIds().length);
   if ($('apiRestrictFreeAccounts')) $('apiRestrictFreeAccounts').checked = !!state.apiRestrictFreeAccounts;
+  if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy || 'manual';
   if ($('apiPoolHint')) {
     const savedCount = selectedApiAccountIds().length;
     const modalIds = selectedApiModalAccountIds();
     const byId = apiAccountById();
     const first = byId.get((state.apiModalOpen ? modalIds : selectedApiAccountIds())[0]);
     const active = state.data && state.data.codexApp && state.data.codexApp.apiService && state.data.codexApp.apiService.active;
+    const strategy = state.apiRoutingStrategy || (state.data && state.data.localAccess && state.data.localAccess.routingStrategy) || 'manual';
     const prefix = state.apiModalOpen
       ? ('保存后按当前顺序使用 · 优先：' + (first ? maskEmail(first.email) : '-'))
       : ((active ? '已接入' : '未接入') + ' · 已保存 ' + savedCount + ' 个账号');
-    $('apiPoolHint').textContent = prefix + ' · 策略：手动优先';
+    const suffix = strategy === 'custom'
+      ? ' · 策略：自定义 priority / weight'
+      : ' · 策略：' + strategyLabel(strategy);
+    $('apiPoolHint').textContent = prefix + suffix;
   }
 }
 
@@ -4608,9 +4732,17 @@ function renderApiPoolAccounts() {
     const freeBlocked = state.apiRestrictFreeAccounts && plan === 'FREE' && !selected;
     const quotaText = quotaSummaryText(account);
     const priorityIndex = modalIndex.has(account.id) ? modalIndex.get(account.id) : -1;
+    const routeRule = apiRouteRule(account.id);
+    const routeControls = selected && state.apiRoutingStrategy === 'custom' ? (
+      '<span class="api-route-controls" onclick="event.stopPropagation()">' +
+        '<span class="api-route-control">priority <input type="number" min="0" max="100" step="1" data-api-route-priority data-account-id="' + escapeHtml(account.id) + '" value="' + escapeHtml(routeRule.priority) + '"></span>' +
+        '<span class="api-route-control">weight <input type="number" min="1" max="100" step="1" data-api-route-weight data-account-id="' + escapeHtml(account.id) + '" value="' + escapeHtml(routeRule.weight) + '"></span>' +
+      '</span>'
+    ) : '';
     const priority = selected ? (
       '<div class="api-pool-priority">' +
         '<span class="api-priority-badge">' + (priorityIndex === 0 ? '优先使用' : ('#' + (priorityIndex + 1))) + '</span>' +
+        routeControls +
         '<span class="api-priority-controls">' +
           '<button type="button" class="api-priority-btn" data-api-priority="top" data-account-id="' + escapeHtml(account.id) + '"' + (priorityIndex === 0 ? ' disabled' : '') + '>置顶</button>' +
           '<button type="button" class="api-priority-btn icon-only" title="上移" data-api-priority="up" data-account-id="' + escapeHtml(account.id) + '"' + (priorityIndex <= 0 ? ' disabled' : '') + '>${icons.chevronUp}</button>' +
@@ -4676,6 +4808,7 @@ function renderApiStatsPanel() {
   if ($('statsChatUrl')) $('statsChatUrl').textContent = chatUrl || '-';
   if ($('statsRoutingStrategy')) $('statsRoutingStrategy').textContent = strategyLabel(local.routingStrategy) + ' / ' + serviceTierModeLabel(local.serviceTierMode);
   if ($('statsMemberCount')) $('statsMemberCount').textContent = ((local.accountIds || []).length || 0) + ' 个';
+  renderApiHealthResult();
   document.querySelectorAll('[data-stats-range]').forEach(function(button) {
     button.classList.toggle('active', button.dataset.statsRange === state.statsRange);
   });
@@ -4747,14 +4880,66 @@ async function clearApiStats() {
   toast('API 服务统计已清除');
 }
 
+function renderApiHealthResult() {
+  const box = $('apiHealthResult');
+  if (!box) return;
+  const result = state.apiHealthResult;
+  box.classList.toggle('ok', Boolean(result && result.ok));
+  box.classList.toggle('fail', Boolean(result && result.ok === false));
+  if (state.apiHealthBusy) {
+    box.textContent = '正在通过真实 /v1/responses 请求检查上游 API/CLI 可用性...';
+    return;
+  }
+  if (!result) {
+    box.textContent = '点击右上角心跳按钮，会通过真实 /v1/responses 上游请求检查 API/CLI 可用性（只发极短 OK 请求）。';
+    return;
+  }
+  const account = result.account ? maskEmail(result.account.email || result.account.id) : '-';
+  const latency = result.latencyMs != null ? (Number(result.latencyMs) / 1000).toFixed(2) + 's' : '-';
+  const status = result.statusCode != null ? statusCodeLabel(result.statusCode) : '-';
+  const preview = result.outputPreview ? ' · 返回=' + result.outputPreview : '';
+  const error = result.error ? ' · ' + safeIssueText(result.error, 180) : '';
+  box.textContent = (result.ok ? '健康检查通过' : '健康检查失败') +
+    ' · 账号=' + account +
+    ' · 状态=' + status +
+    ' · 延迟=' + latency +
+    preview +
+    error;
+}
+
+async function runApiHealthCheck() {
+  if (state.apiHealthBusy) return;
+  state.apiHealthBusy = true;
+  renderApiHealthResult();
+  try {
+    const res = await fetch('/_admin/local-access/health', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: $('statsModelId') ? $('statsModelId').textContent : 'gpt-5.5' })
+    });
+    const data = await res.json();
+    state.apiHealthResult = data;
+    setOutput(data);
+  } catch (err) {
+    state.apiHealthResult = { ok: false, error: String(err && err.message || err) };
+    setOutput(String(err && err.message || err));
+  } finally {
+    state.apiHealthBusy = false;
+    renderApiHealthResult();
+  }
+}
+
 function openApiPoolModal() {
   const local = state.data && state.data.localAccess || {};
   state.apiModalOpen = true;
   state.apiModalIds = new Set((local.accountIds || []).filter(Boolean));
   state.apiRestrictFreeAccounts = local.restrictFreeAccounts !== false;
+  state.apiRoutingStrategy = local.routingStrategy || 'manual';
+  state.apiCustomRules = normalizeApiCustomRules(local.customRoutingRules || local.custom_routing_rules || []);
   state.apiPoolQuery = '';
   if ($('apiPoolSearch')) $('apiPoolSearch').value = '';
   if ($('apiRestrictFreeAccounts')) $('apiRestrictFreeAccounts').checked = state.apiRestrictFreeAccounts;
+  if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy;
   renderApiPoolAccounts();
   $('apiPoolModal').classList.add('show');
   $('apiPoolModal').setAttribute('aria-hidden', 'false');
@@ -4783,13 +4968,21 @@ async function saveApiPool(options) {
   const res = await fetch('/_admin/local-access', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ enabled: true, accountIds: ids, restrictFreeAccounts: restrictFreeAccounts, routingStrategy: 'manual' })
+    body: JSON.stringify({
+      enabled: true,
+      accountIds: ids,
+      restrictFreeAccounts: restrictFreeAccounts,
+      routingStrategy: state.apiRoutingStrategy || 'manual',
+      customRoutingRules: selectedApiCustomRoutingRules(ids)
+    })
   });
   const data = await res.json();
   state.data.localAccess = data;
   state.apiAccountIds = new Set(data.accountIds || []);
   state.apiModalIds = new Set(data.accountIds || []);
   state.apiRestrictFreeAccounts = data.restrictFreeAccounts !== false;
+  state.apiRoutingStrategy = data.routingStrategy || state.apiRoutingStrategy || 'manual';
+  state.apiCustomRules = normalizeApiCustomRules(data.customRoutingRules || []);
   renderLocalAccessMembers();
   renderApiPoolAccounts();
   renderAccounts();
@@ -5272,14 +5465,19 @@ async function loadState() {
   state.data = await res.json();
   const localAccessIds = (state.data.localAccess && state.data.localAccess.accountIds) || [];
   state.apiAccountIds = new Set(localAccessIds);
-  state.apiRestrictFreeAccounts = !(state.data.localAccess && state.data.localAccess.restrictFreeAccounts === false);
-  if (!state.apiModalOpen) state.apiModalIds = new Set(localAccessIds);
+  if (!state.apiModalOpen) {
+    state.apiRestrictFreeAccounts = !(state.data.localAccess && state.data.localAccess.restrictFreeAccounts === false);
+    state.apiRoutingStrategy = (state.data.localAccess && state.data.localAccess.routingStrategy) || 'manual';
+    state.apiCustomRules = normalizeApiCustomRules((state.data.localAccess && state.data.localAccess.customRoutingRules) || []);
+    state.apiModalIds = new Set(localAccessIds);
+  }
   state.apiSelectionInitialized = true;
   normalizeAccountOrder();
   state.selectionInitialized = true;
   if ($('baseUrl')) $('baseUrl').textContent = state.data.baseUrl;
   if ($('apiKeyMasked')) $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('apiSpeedMode')) $('apiSpeedMode').value = (state.data.localAccess && state.data.localAccess.serviceTierMode) || 'normal';
+  if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy;
   if ($('localAccessStatus')) {
     const local = state.data.localAccess || {};
     const running = isApiServiceActive();
@@ -5355,10 +5553,18 @@ async function activateApiServiceForCodexApp() {
   if (!confirm(confirmMessage)) return;
   setOutput('\u6b63\u5728\u5199\u5165 Codex App API \u670d\u52a1\u914d\u7f6e...');
   const restrictFreeAccounts = !(state.data.localAccess && state.data.localAccess.restrictFreeAccounts === false);
+  const localAccess = state.data.localAccess || {};
   const res = await fetch('/_admin/codex-app/api-service', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ accountIds: ids, restrictFreeAccounts: restrictFreeAccounts, routingStrategy: 'manual', backup: true, restartCodexApp: true })
+    body: JSON.stringify({
+      accountIds: ids,
+      restrictFreeAccounts: restrictFreeAccounts,
+      routingStrategy: localAccess.routingStrategy || state.apiRoutingStrategy || 'manual',
+      customRoutingRules: localAccess.customRoutingRules || selectedApiCustomRoutingRules(ids),
+      backup: true,
+      restartCodexApp: true
+    })
   });
   const data = await res.json();
   setOutput(data);
@@ -5802,6 +6008,30 @@ document.addEventListener('change', function(event) {
     }
     renderApiPoolAccounts();
   }
+  if (event.target && event.target.id === 'apiRoutingStrategy') {
+    state.apiRoutingStrategy = event.target.value || 'manual';
+    renderApiPoolAccounts();
+  }
+  if (event.target && event.target.matches && (event.target.matches('[data-api-route-priority]') || event.target.matches('[data-api-route-weight]'))) {
+    const id = event.target.dataset.accountId;
+    if (id) {
+      const current = apiRouteRule(id);
+      if (event.target.matches('[data-api-route-priority]')) current.priority = clampRouteNumber(event.target.value, 0, 100, 50);
+      if (event.target.matches('[data-api-route-weight]')) current.weight = clampRouteNumber(event.target.value, 1, 100, 1);
+      state.apiCustomRules[id] = current;
+    }
+  }
+});
+
+document.addEventListener('input', function(event) {
+  if (event.target && event.target.matches && (event.target.matches('[data-api-route-priority]') || event.target.matches('[data-api-route-weight]'))) {
+    const id = event.target.dataset.accountId;
+    if (!id) return;
+    const current = apiRouteRule(id);
+    if (event.target.matches('[data-api-route-priority]')) current.priority = clampRouteNumber(event.target.value, 0, 100, 50);
+    if (event.target.matches('[data-api-route-weight]')) current.weight = clampRouteNumber(event.target.value, 1, 100, 1);
+    state.apiCustomRules[id] = current;
+  }
 });
 
 $('addAccountBtn').onclick = openApiPoolModal;
@@ -5844,6 +6074,7 @@ $('apiSpeedMode').onchange = saveApiSpeedMode;
 $('apiStatsModalCloseBtn').onclick = closeApiStatsModal;
 $('apiStatsCloseFooterBtn').onclick = closeApiStatsModal;
 $('apiStatsModal').onclick = function(event) { if (event.target === $('apiStatsModal')) closeApiStatsModal(); };
+$('apiHealthCheckBtn').onclick = runApiHealthCheck;
 $('apiStatsRefreshBtn').onclick = function() { loadState().then(function() { renderApiStatsPanel(); toast('统计已刷新'); }); };
 $('apiStatsClearBtn').onclick = clearApiStats;
 $('activateApiServiceBtn').onclick = activateApiServiceForCodexApp;

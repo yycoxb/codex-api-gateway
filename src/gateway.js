@@ -100,6 +100,52 @@ function safeErrorReason(err, fallback = 'request failed') {
   return safeFailureReason(code ? `${fallback} (${code})` : fallback, fallback);
 }
 
+function nestedErrorText(err) {
+  const parts = [];
+  let current = err;
+  const seen = new Set();
+  while (current && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    if (current.name) parts.push(String(current.name));
+    if (current.code) parts.push(String(current.code));
+    if (current.errno) parts.push(String(current.errno));
+    if (current.message) parts.push(String(current.message));
+    current = current.cause;
+  }
+  return parts.join(' ').toLowerCase();
+}
+
+function upstreamNetworkDiagnostics(err) {
+  const text = nestedErrorText(err);
+  const code = String(err?.code || err?.cause?.code || err?.cause?.cause?.code || '').trim().toUpperCase();
+  let category = 'network';
+  let detail = 'Codex 上游网络或代理连接失败';
+  if (/enotfound|eai_again|dns|getaddrinfo/.test(text)) {
+    category = 'dns';
+    detail = 'Codex 上游域名解析失败';
+  } else if (/econnrefused|refused/.test(text)) {
+    category = 'refused';
+    detail = 'Codex 上游连接被拒绝，通常是代理端口不可用或被拦截';
+  } else if (/etimedout|timeout|timed out|headers timeout|body timeout/.test(text)) {
+    category = 'timeout';
+    detail = 'Codex 上游连接超时';
+  } else if (/econnreset|socket hang up|terminated|aborted/.test(text)) {
+    category = 'reset';
+    detail = 'Codex 上游连接被重置';
+  } else if (/proxy|socks|tunnel|connect/.test(text)) {
+    category = 'proxy';
+    detail = '代理连接到 Codex 上游失败';
+  } else if (/fetch failed/.test(text)) {
+    category = 'fetch_failed';
+  }
+  const hint = '请检查网络、系统代理/HTTP(S)_PROXY/NO_PROXY 设置，以及 chatgpt.com 是否可访问';
+  return {
+    category,
+    code: code || null,
+    message: safeFailureReason(`${detail}${code ? ` (${code})` : ''}；${hint}`, detail),
+  };
+}
+
 function safeDiagnosticValue(value) {
   if (value === undefined || value === null) return null;
   if (['string', 'number', 'boolean'].includes(typeof value)) return value;
@@ -681,7 +727,10 @@ async function sendUpstream({ req, body, account, target, streamMode }) {
       await sleep(Math.min(1200, UPSTREAM_SEND_RETRY_BASE_DELAY_MS * (2 ** attempt)));
     }
   }
-  throw lastError || new Error('fetch failed');
+  const err = lastError || new Error('fetch failed');
+  err.upstreamNetworkDiagnostics = upstreamNetworkDiagnostics(err);
+  err.statusCode = 502;
+  throw err;
 }
 
 function rebuildTextResponse(upstream, text) {
@@ -762,12 +811,14 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
     try {
       upstream = await sendUpstream({ req, body, account, target, streamMode });
     } catch (err) {
+      const network = err?.upstreamNetworkDiagnostics || upstreamNetworkDiagnostics(err);
+      err.statusCode = 502;
       pushRoutingAttempt(routingDiagnostics, {
         account,
         model: hint.modelKey || null,
         success: false,
-        statusCode: 'network',
-        reason: safeErrorReason(err, 'upstream connection failed'),
+        statusCode: 502,
+        reason: network.message,
         retryable: true,
       });
       lastError = err;
@@ -779,12 +830,14 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
         account = await refreshAccountIfNeeded(account, true);
         upstream = await sendUpstream({ req, body, account, target, streamMode });
       } catch (err) {
+        const network = err?.upstreamNetworkDiagnostics || null;
+        if (network) err.statusCode = 502;
         pushRoutingAttempt(routingDiagnostics, {
           account,
           model: hint.modelKey || null,
           success: false,
-          statusCode: 401,
-          reason: safeErrorReason(err, 'authorization refresh failed'),
+          statusCode: network ? 502 : 401,
+          reason: network ? network.message : safeErrorReason(err, 'authorization refresh failed'),
           retryable: true,
         });
         lastError = err;
@@ -887,6 +940,9 @@ async function sendWithAccountPool({ req, body, target, streamMode }) {
   }
   const err = lastError || new Error('No usable Codex account is available for API service');
   err.routingDiagnostics = finalizeRoutingDiagnostics(routingDiagnostics, null, null);
+  if (lastError?.statusCode) err.statusCode = lastError.statusCode;
+  if (lastError?.upstreamNetworkDiagnostics) err.upstreamNetworkDiagnostics = lastError.upstreamNetworkDiagnostics;
+  if (err.statusCode && err.routingDiagnostics?.final) err.routingDiagnostics.final.statusCode = err.statusCode;
   throw err;
 }
 
@@ -999,7 +1055,7 @@ async function proxyCodexRequest(req, res, body) {
       success: false,
       latencyMs: Date.now() - startedAt,
       usage: capture?.usage,
-      statusCode: upstream?.status ?? null,
+      statusCode: upstream?.status ?? err?.statusCode ?? null,
       failureReason: routingDiagnostics?.final?.reason || safeErrorReason(err, 'gateway request failed'),
       attempts: routingDiagnostics?.attempts,
     }).catch(() => {});
@@ -1231,6 +1287,86 @@ async function handleLocalAccessRuntime(req, res) {
   return jsonResponse(res, 200, getLocalAccessRuntimeState());
 }
 
+function extractHealthOutputPreview(value) {
+  const candidates = [
+    value?.output_text,
+    value?.output?.[0]?.content?.[0]?.text,
+    value?.output?.[0]?.content?.[0]?.value,
+    value?.response?.output_text,
+    value?.choices?.[0]?.message?.content,
+  ];
+  const text = candidates.find((item) => typeof item === 'string' && item.trim());
+  return text ? text.trim().slice(0, 80) : null;
+}
+
+async function handleLocalAccessHealth(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  const model = String(payload.model || 'gpt-5.5').trim() || 'gpt-5.5';
+  const startedAt = Date.now();
+  const fakeReq = {
+    method: 'POST',
+    url: '/v1/responses',
+    headers: {
+      accept: 'application/json',
+      'content-type': 'application/json',
+      'x-codex-beta-features': 'responses',
+    },
+  };
+  let requestBody = Buffer.from(JSON.stringify({
+    model,
+    input: 'Reply with exactly: OK',
+    stream: false,
+  }));
+  const localAccessConfig = await loadLocalAccessConfig();
+  const serviceTierRewrite = applyServiceTierMode(requestBody, localAccessConfig.serviceTierMode);
+  requestBody = serviceTierRewrite.body;
+  let routingDiagnostics = null;
+  try {
+    const { upstream, account, routingDiagnostics: routing } = await sendWithAccountPool({
+      req: fakeReq,
+      body: requestBody,
+      target: '/responses',
+      streamMode: false,
+    });
+    routingDiagnostics = routing;
+    const text = await upstream.text().catch(() => '');
+    let parsed = null;
+    try { parsed = text ? JSON.parse(text) : null; } catch {}
+    const ok = Boolean(upstream.ok);
+    return jsonResponse(res, 200, {
+      ok,
+      stage: ok ? 'upstream_response' : 'upstream_status',
+      model,
+      latencyMs: Date.now() - startedAt,
+      statusCode: upstream.status,
+      account: runtimeAccountSummary(account),
+      outputPreview: parsed ? extractHealthOutputPreview(parsed) : null,
+      responseBytes: Buffer.byteLength(text || '', 'utf8'),
+      diagnostics: {
+        routing: routingDiagnostics,
+        serviceTier: serviceTierRewrite.rewrite || null,
+      },
+      error: ok ? null : classifyUpstreamFailure(upstream.status, text),
+    });
+  } catch (err) {
+    if (!routingDiagnostics && err?.routingDiagnostics) routingDiagnostics = err.routingDiagnostics;
+    const network = err?.upstreamNetworkDiagnostics || null;
+    return jsonResponse(res, 200, {
+      ok: false,
+      stage: network ? 'network' : 'gateway',
+      model,
+      latencyMs: Date.now() - startedAt,
+      statusCode: err?.statusCode || null,
+      error: network?.message || safeErrorReason(err, 'health check failed'),
+      diagnostics: {
+        routing: routingDiagnostics,
+        network,
+      },
+    });
+  }
+}
+
 async function handleLocalAccess(req, res) {
   if (req.method === 'GET') return jsonResponse(res, 200, await loadLocalAccessConfig());
   const body = await readBody(req);
@@ -1301,6 +1437,7 @@ async function handleCodexAppApiService(req, res, config) {
     accountIds,
     restrictFreeAccounts: payload.restrictFreeAccounts ?? currentLocalAccess.restrictFreeAccounts ?? true,
     routingStrategy: payload.routingStrategy ?? currentLocalAccess.routingStrategy,
+    customRoutingRules: payload.customRoutingRules ?? currentLocalAccess.customRoutingRules,
   });
   const baseUrl = `http://${config.host}:${config.port}/v1`;
   const result = await activateCodexApiService({
@@ -1386,6 +1523,7 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/token-keeper/run-now') return await handleTokenKeeperRunNow(req, res);
       if ((req.method === 'GET' || req.method === 'POST') && u.pathname === '/_admin/local-access') return await handleLocalAccess(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/local-access/runtime') return await handleLocalAccessRuntime(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/local-access/health') return await handleLocalAccessHealth(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/local-access/stats') return await handleLocalAccessStats(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear') return await handleClearLocalAccessStats(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/codex-app/state') return await handleCodexAppState(req, res);
@@ -1410,7 +1548,12 @@ export function createServer(config) {
       return await proxyCodexRequest(req, res, body);
     } catch (err) {
       console.error('[gateway] request failed:', err);
-      if (!res.headersSent) return jsonResponse(res, 500, { error: String(err?.message || err) });
+      const status = Number(err?.statusCode || err?.status || 500);
+      const diagnostics = err?.upstreamNetworkDiagnostics || null;
+      if (!res.headersSent) return jsonResponse(res, Number.isFinite(status) ? status : 500, {
+        error: diagnostics?.message || String(err?.message || err),
+        ...(diagnostics ? { diagnostics } : {}),
+      });
       res.end();
     }
   });
