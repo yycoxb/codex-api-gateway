@@ -83,6 +83,29 @@ function parseQuotaFromUsage(usage) {
   };
 }
 
+function quotaErrorCode(err) {
+  return String(err?.errorCode || err?.code || err?.detailCode || '').trim().toLowerCase();
+}
+
+function quotaErrorMessage(err) {
+  return String(err?.message || err || '').trim().toLowerCase();
+}
+
+function isTokenInvalidatedQuotaError(err) {
+  const status = Number(err?.statusCode || err?.status || 0);
+  const code = quotaErrorCode(err);
+  const message = quotaErrorMessage(err);
+  if (status !== 401 && !/\b401\b|unauthorized/i.test(message)) return false;
+  return (
+    code === 'token_invalidated' ||
+    code === 'invalid_token' ||
+    code === 'refresh_token_invalidated' ||
+    message.includes('token_invalidated') ||
+    message.includes('invalid_token') ||
+    message.includes('authentication token has been invalidated')
+  );
+}
+
 async function fetchQuota(account) {
   const headers = {
     authorization: `Bearer ${account.tokens.access_token.trim()}`,
@@ -100,7 +123,11 @@ async function fetchQuota(account) {
       const data = JSON.parse(text);
       code = data?.detail?.code || data?.error?.code || data?.code || null;
     } catch {}
-    throw new Error(`用量接口返回 ${resp.status}${code ? ` (${code})` : ''}: body_len=${text.length}`);
+    const err = new Error(`用量接口返回 ${resp.status}${code ? ` (${code})` : ''}: body_len=${text.length}`);
+    err.statusCode = resp.status;
+    err.errorCode = code || null;
+    err.bodyLength = text.length;
+    throw err;
   }
 
   try {
@@ -115,7 +142,14 @@ export async function refreshAccountQuota(accountId) {
 
   try {
     account = await refreshAccountIfNeeded(account);
-    let usage = await fetchQuota(account);
+    let usage;
+    try {
+      usage = await fetchQuota(account);
+    } catch (err) {
+      if (!isTokenInvalidatedQuotaError(err)) throw err;
+      account = await refreshAccountIfNeeded(account, true);
+      usage = await fetchQuota(account);
+    }
     const quota = parseQuotaFromUsage(usage);
 
     account.quota = quota;
@@ -154,6 +188,8 @@ export async function refreshAccountQuota(accountId) {
   } catch (err) {
     account.quotaError = {
       message: String(err?.message || err),
+      statusCode: err?.statusCode || err?.status || null,
+      code: err?.errorCode || err?.code || null,
       timestamp: nowMs(),
     };
     await saveAccount(account);
