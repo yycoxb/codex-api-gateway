@@ -4095,14 +4095,9 @@ function accountStatusIssue(account) {
       detail: safeIssueText(account.reauthReason || 'token refresh failed'),
     };
   }
-  const quotaError = account.quotaError || account.quota_error || null;
-  if (quotaError && isAccountSpecificQuotaError(quotaError)) {
-    return {
-      tone: 'warn',
-      title: '用量验证失败',
-      detail: safeIssueText(quotaError.message || quotaError.error || quotaError.reason || '状态待验证'),
-    };
-  }
+  // Quota refresh is only an auxiliary verification path. Keep the raw
+  // quotaError in state for diagnostics, but do not show noisy account-card
+  // warnings such as "用量接口返回 401 (token_invalidated...)".
   const failure = accountRecentApiFailure(account);
   if (failure && failure.reason && isAccountSpecificApiFailure(failure)) {
     return {
