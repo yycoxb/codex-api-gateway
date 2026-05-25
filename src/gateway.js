@@ -1436,6 +1436,7 @@ async function handleCodexAppApiService(req, res, config) {
     enabled: true,
     accountIds,
     restrictFreeAccounts: payload.restrictFreeAccounts ?? currentLocalAccess.restrictFreeAccounts ?? true,
+    allowSessionOnlyAccounts: payload.allowSessionOnlyAccounts ?? currentLocalAccess.allowSessionOnlyAccounts ?? true,
     routingStrategy: payload.routingStrategy ?? currentLocalAccess.routingStrategy,
     customRoutingRules: payload.customRoutingRules ?? currentLocalAccess.customRoutingRules,
   });

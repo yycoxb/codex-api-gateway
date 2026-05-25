@@ -1,5 +1,6 @@
 ﻿import { LOCAL_ACCESS_PATH } from './constants.js';
 import { loadAccount, loadAccountStore } from './account.js';
+import { isTokenExpired } from './jwt.js';
 import { readJson, writeJson } from './storage.js';
 import { nowMs } from './utils.js';
 
@@ -11,6 +12,7 @@ const DEFAULT_LOCAL_ACCESS = {
   customRoutingRules: [],
   serviceTierMode: 'normal',
   restrictFreeAccounts: true,
+  allowSessionOnlyAccounts: true,
   createdAt: 0,
   updatedAt: 0,
 };
@@ -91,6 +93,10 @@ function normalizeServiceTierMode(value) {
 function normalizeLocalAccess(raw) {
   const now = nowMs();
   const hasRestrictFreeAccounts = raw && Object.prototype.hasOwnProperty.call(raw, 'restrictFreeAccounts');
+  const hasAllowSessionOnlyAccounts = raw && (
+    Object.prototype.hasOwnProperty.call(raw, 'allowSessionOnlyAccounts') ||
+    Object.prototype.hasOwnProperty.call(raw, 'allow_session_only_accounts')
+  );
   return {
     ...DEFAULT_LOCAL_ACCESS,
     ...(raw && typeof raw === 'object' ? raw : {}),
@@ -101,6 +107,9 @@ function normalizeLocalAccess(raw) {
     customRoutingRules: normalizeCustomRoutingRules(raw?.customRoutingRules || raw?.custom_routing_rules),
     serviceTierMode: normalizeServiceTierMode(raw?.serviceTierMode || raw?.speedMode),
     restrictFreeAccounts: hasRestrictFreeAccounts ? raw.restrictFreeAccounts !== false : DEFAULT_LOCAL_ACCESS.restrictFreeAccounts,
+    allowSessionOnlyAccounts: hasAllowSessionOnlyAccounts
+      ? (raw.allowSessionOnlyAccounts ?? raw.allow_session_only_accounts) !== false
+      : DEFAULT_LOCAL_ACCESS.allowSessionOnlyAccounts,
     createdAt: Number(raw?.createdAt || now),
     updatedAt: Number(raw?.updatedAt || now),
   };
@@ -117,9 +126,28 @@ function isOAuthProxyAccount(account) {
   return Boolean(account.tokens?.access_token);
 }
 
-function isUsableProxyAccount(account, restrictFreeAccounts) {
+function hasUsableRefreshToken(account) {
+  const raw = String(account?.tokens?.refresh_token || '').trim().toLowerCase();
+  return Boolean(raw && ![
+    '__missing_refresh_token__',
+    'missing_refresh_token',
+    '<missing>',
+    'null',
+    'undefined',
+  ].includes(raw));
+}
+
+function isSessionOnlyAccount(account) {
+  return Boolean(account?.tokens?.access_token && !hasUsableRefreshToken(account));
+}
+
+function isUsableProxyAccount(account, restrictFreeAccounts, allowSessionOnlyAccounts = true) {
   if (!isOAuthProxyAccount(account)) return false;
   if (restrictFreeAccounts && isFreePlan(account)) return false;
+  if (isSessionOnlyAccount(account)) {
+    if (!allowSessionOnlyAccounts) return false;
+    if (isTokenExpired(account.tokens.access_token)) return false;
+  }
   return true;
 }
 
@@ -243,8 +271,10 @@ export async function loadLocalAccessConfig() {
 export async function saveLocalAccessConfig(payload = {}) {
   const current = await loadLocalAccessConfig();
   const accountStore = await loadAccountStore();
+  const restrictFreeAccounts = Boolean(payload.restrictFreeAccounts ?? current.restrictFreeAccounts);
+  const allowSessionOnlyAccounts = (payload.allowSessionOnlyAccounts ?? payload.allow_session_only_accounts ?? current.allowSessionOnlyAccounts) !== false;
   const validAccounts = accountStore.accounts.filter((account) => (
-    isUsableProxyAccount(account, Boolean(payload.restrictFreeAccounts ?? current.restrictFreeAccounts))
+    isUsableProxyAccount(account, restrictFreeAccounts, allowSessionOnlyAccounts)
   ));
   const validIds = new Set(validAccounts.map((account) => account.id));
   const next = normalizeLocalAccess({
@@ -252,6 +282,7 @@ export async function saveLocalAccessConfig(payload = {}) {
     ...payload,
     routingStrategy: normalizeRoutingStrategy(payload.routingStrategy ?? current.routingStrategy),
     serviceTierMode: normalizeServiceTierMode(payload.serviceTierMode ?? payload.speedMode ?? current.serviceTierMode),
+    allowSessionOnlyAccounts,
     accountIds: normalizeAccountIds(payload.accountIds ?? current.accountIds, validIds),
     customRoutingRules: normalizeCustomRoutingRules(
       payload.customRoutingRules ?? payload.custom_routing_rules ?? current.customRoutingRules,
@@ -269,7 +300,7 @@ export async function getProxyAccountIds() {
   const accountStore = await loadAccountStore();
   const validIds = new Set(
     accountStore.accounts
-      .filter((account) => isUsableProxyAccount(account, config.restrictFreeAccounts))
+      .filter((account) => isUsableProxyAccount(account, config.restrictFreeAccounts, config.allowSessionOnlyAccounts))
       .map((account) => account.id),
   );
   let ids = normalizeAccountIds(config.enabled ? config.accountIds : [], validIds);

@@ -90,6 +90,8 @@ function buildAccountId({ email, accountId, idToken, accessToken }) {
 
 function accountSummary(account) {
   const tokenInfo = account.tokens ? extractAuthInfo(account.tokens) : {};
+  const accessTokenExpiresAt = account.tokens?.access_token ? tokenExpMs(account.tokens.access_token) : 0;
+  const hasRefreshToken = hasUsableRefreshToken(account.tokens?.refresh_token);
   return {
     id: account.id,
     email: account.email,
@@ -108,6 +110,9 @@ function accountSummary(account) {
     tokenSourceMode: account.tokenSourceMode || account.token_source_mode,
     requiresReauth: Boolean(account.requiresReauth || account.requires_reauth),
     reauthReason: account.reauthReason || account.reauth_reason || null,
+    hasRefreshToken,
+    sessionOnly: Boolean(account.tokens?.access_token && !hasRefreshToken),
+    accessTokenExpiresAt: accessTokenExpiresAt || null,
     tags: Array.isArray(account.tags) ? account.tags : null,
     quota: summarizeQuota(account.quota),
     quotaError: account.quotaError || null,
@@ -438,6 +443,19 @@ function normalizeOptional(value) {
   if (value === undefined || value === null) return null;
   const text = String(value).trim();
   return text ? text : null;
+}
+
+function hasUsableRefreshToken(value) {
+  const text = normalizeOptional(value);
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  return ![
+    '__missing_refresh_token__',
+    'missing_refresh_token',
+    '<missing>',
+    'null',
+    'undefined',
+  ].includes(lower);
 }
 
 function parseLastRefreshMs(value) {

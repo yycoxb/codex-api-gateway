@@ -3475,9 +3475,10 @@ export function renderAdminHtml() {
             </select>
           </label>
           <label class="modal-toggle"><input type="checkbox" id="apiRestrictFreeAccounts" checked /> 限制 Free 账号使用</label>
+          <label class="modal-toggle"><input type="checkbox" id="apiAllowSessionOnlyAccounts" checked /> 允许短期 Session</label>
           <span class="selected-pill"><b id="apiModalSelectedCount">0</b> 已选</span>
         </div>
-        <div class="api-pool-hint">手动优先按列表顺序尝试；自定义路由会先按 priority 高低分组，同组按 weight 轮转首选账号。</div>
+        <div class="api-pool-hint">手动优先按列表顺序尝试；自定义路由会先按 priority 高低分组，同组按 weight 轮转首选账号。短期 Session 没有 refresh_token，access_token 过期后需要重新导入。</div>
         <div class="api-pool-list" id="apiPoolModalList"></div>
         <div class="api-pool-hint" id="apiPoolHint">这里的选择只影响 API 服务账号池；不会切换 Codex App。</div>
       </div>
@@ -3608,6 +3609,7 @@ const state = {
   apiModalOpen: false,
   apiPoolQuery: '',
   apiRestrictFreeAccounts: true,
+  apiAllowSessionOnlyAccounts: true,
   apiRoutingStrategy: 'manual',
   apiCustomRules: {},
   apiHealthBusy: false,
@@ -4269,6 +4271,19 @@ function isFreeAccount(account) {
   return String(account && (account.planType || account.plan_type) || '').toLowerCase().includes('free');
 }
 
+function isSessionOnlyAccount(account) {
+  if (!account) return false;
+  if (account.sessionOnly === true) return true;
+  if (account.hasRefreshToken === true) return false;
+  return account.hasRefreshToken === false;
+}
+
+function isSessionOnlyExpired(account) {
+  if (!isSessionOnlyAccount(account)) return false;
+  const expiresAt = Number(account.accessTokenExpiresAt || account.access_token_expires_at || 0);
+  return expiresAt > 0 && expiresAt <= Date.now() + 300000;
+}
+
 function planBadgeClass(plan) {
   const value = String(plan || '').trim().toUpperCase();
   if (value === 'FREE') return 'free';
@@ -4337,6 +4352,7 @@ function syncApiSelectionControls() {
   if ($('apiModalSelectedCount')) $('apiModalSelectedCount').textContent = String(modalCount);
   if ($('apiPoolCount')) $('apiPoolCount').textContent = String(selectedApiAccountIds().length);
   if ($('apiRestrictFreeAccounts')) $('apiRestrictFreeAccounts').checked = !!state.apiRestrictFreeAccounts;
+  if ($('apiAllowSessionOnlyAccounts')) $('apiAllowSessionOnlyAccounts').checked = !!state.apiAllowSessionOnlyAccounts;
   if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy || 'manual';
   if ($('apiPoolHint')) {
     const savedCount = selectedApiAccountIds().length;
@@ -4725,6 +4741,10 @@ function renderApiPoolAccounts() {
     const selected = state.apiModalIds.has(account.id);
     const plan = planLabel(account.planType);
     const freeBlocked = state.apiRestrictFreeAccounts && plan === 'FREE' && !selected;
+    const sessionOnly = isSessionOnlyAccount(account);
+    const sessionExpired = isSessionOnlyExpired(account);
+    const sessionBlocked = !state.apiAllowSessionOnlyAccounts && sessionOnly && !selected;
+    const disabled = freeBlocked || sessionBlocked || (sessionExpired && !selected);
     const quotaText = quotaSummaryText(account);
     const priorityIndex = modalIndex.has(account.id) ? modalIndex.get(account.id) : -1;
     const routeRule = apiRouteRule(account.id);
@@ -4745,11 +4765,14 @@ function renderApiPoolAccounts() {
         '</span>' +
       '</div>'
     ) : '<div class="api-pool-priority"></div>';
-    return '<label class="api-pool-row ' + (selected ? 'selected ' : '') + (freeBlocked ? 'disabled' : '') + '">' +
-      '<input type="checkbox" data-api-modal-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + (freeBlocked ? ' disabled' : '') + '>' +
+    const sessionHint = sessionOnly
+      ? (sessionExpired ? ' · Session 已过期/即将过期' : (' · 短期 Session' + (account.accessTokenExpiresAt ? (' 至 ' + formatShortDate(account.accessTokenExpiresAt)) : '')))
+      : '';
+    return '<label class="api-pool-row ' + (selected ? 'selected ' : '') + (disabled ? 'disabled' : '') + '">' +
+      '<input type="checkbox" data-api-modal-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + (disabled ? ' disabled' : '') + '>' +
       '<div class="api-pool-main">' +
         '<div class="api-pool-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div>' +
-        '<div class="api-pool-meta">' + escapeHtml(loginLabel(account)) + ' · ' + escapeHtml(quotaText) + '</div>' +
+        '<div class="api-pool-meta">' + escapeHtml(loginLabel(account)) + ' · ' + escapeHtml(quotaText + sessionHint) + '</div>' +
       '</div>' +
       priority +
       '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span>' +
@@ -4929,11 +4952,13 @@ function openApiPoolModal() {
   state.apiModalOpen = true;
   state.apiModalIds = new Set((local.accountIds || []).filter(Boolean));
   state.apiRestrictFreeAccounts = local.restrictFreeAccounts !== false;
+  state.apiAllowSessionOnlyAccounts = local.allowSessionOnlyAccounts !== false;
   state.apiRoutingStrategy = local.routingStrategy || 'manual';
   state.apiCustomRules = normalizeApiCustomRules(local.customRoutingRules || local.custom_routing_rules || []);
   state.apiPoolQuery = '';
   if ($('apiPoolSearch')) $('apiPoolSearch').value = '';
   if ($('apiRestrictFreeAccounts')) $('apiRestrictFreeAccounts').checked = state.apiRestrictFreeAccounts;
+  if ($('apiAllowSessionOnlyAccounts')) $('apiAllowSessionOnlyAccounts').checked = state.apiAllowSessionOnlyAccounts;
   if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy;
   renderApiPoolAccounts();
   $('apiPoolModal').classList.add('show');
@@ -4952,12 +4977,15 @@ function closeApiPoolModal() {
 async function saveApiPool(options) {
   options = options || {};
   const restrictFreeAccounts = options.restrictFreeAccounts ?? state.apiRestrictFreeAccounts;
+  const allowSessionOnlyAccounts = options.allowSessionOnlyAccounts ?? state.apiAllowSessionOnlyAccounts;
   const rawIds = Array.isArray(options.accountIds) ? options.accountIds : selectedApiModalAccountIds();
   const byId = apiAccountById();
   const ids = rawIds.filter(function(id) {
     const account = byId.get(id);
     if (!account || isApiKeyAccount(account)) return false;
     if (restrictFreeAccounts && isFreeAccount(account)) return false;
+    if (isSessionOnlyExpired(account)) return false;
+    if (!allowSessionOnlyAccounts && isSessionOnlyAccount(account)) return false;
     return true;
   });
   const res = await fetch('/_admin/local-access', {
@@ -4967,6 +4995,7 @@ async function saveApiPool(options) {
       enabled: true,
       accountIds: ids,
       restrictFreeAccounts: restrictFreeAccounts,
+      allowSessionOnlyAccounts: allowSessionOnlyAccounts,
       routingStrategy: state.apiRoutingStrategy || 'manual',
       customRoutingRules: selectedApiCustomRoutingRules(ids)
     })
@@ -4976,6 +5005,7 @@ async function saveApiPool(options) {
   state.apiAccountIds = new Set(data.accountIds || []);
   state.apiModalIds = new Set(data.accountIds || []);
   state.apiRestrictFreeAccounts = data.restrictFreeAccounts !== false;
+  state.apiAllowSessionOnlyAccounts = data.allowSessionOnlyAccounts !== false;
   state.apiRoutingStrategy = data.routingStrategy || state.apiRoutingStrategy || 'manual';
   state.apiCustomRules = normalizeApiCustomRules(data.customRoutingRules || []);
   renderLocalAccessMembers();
@@ -5073,7 +5103,7 @@ function renderAccounts() {
       '<span class="card-light-follow" aria-hidden="true"></span>' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + (isSessionOnlyAccount(account) ? '<span class="member-tag">短期Session</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="account-meta">' +
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
@@ -5462,6 +5492,7 @@ async function loadState() {
   state.apiAccountIds = new Set(localAccessIds);
   if (!state.apiModalOpen) {
     state.apiRestrictFreeAccounts = !(state.data.localAccess && state.data.localAccess.restrictFreeAccounts === false);
+    state.apiAllowSessionOnlyAccounts = !(state.data.localAccess && state.data.localAccess.allowSessionOnlyAccounts === false);
     state.apiRoutingStrategy = (state.data.localAccess && state.data.localAccess.routingStrategy) || 'manual';
     state.apiCustomRules = normalizeApiCustomRules((state.data.localAccess && state.data.localAccess.customRoutingRules) || []);
     state.apiModalIds = new Set(localAccessIds);
@@ -5473,6 +5504,7 @@ async function loadState() {
   if ($('apiKeyMasked')) $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('apiSpeedMode')) $('apiSpeedMode').value = (state.data.localAccess && state.data.localAccess.serviceTierMode) || 'normal';
   if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy;
+  if ($('apiAllowSessionOnlyAccounts')) $('apiAllowSessionOnlyAccounts').checked = state.apiAllowSessionOnlyAccounts;
   if ($('localAccessStatus')) {
     const local = state.data.localAccess || {};
     const running = isApiServiceActive();
@@ -5555,6 +5587,7 @@ async function activateApiServiceForCodexApp() {
     body: JSON.stringify({
       accountIds: ids,
       restrictFreeAccounts: restrictFreeAccounts,
+      allowSessionOnlyAccounts: localAccess.allowSessionOnlyAccounts !== false,
       routingStrategy: localAccess.routingStrategy || state.apiRoutingStrategy || 'manual',
       customRoutingRules: localAccess.customRoutingRules || selectedApiCustomRoutingRules(ids),
       backup: true,
@@ -6003,6 +6036,18 @@ document.addEventListener('change', function(event) {
     }
     renderApiPoolAccounts();
   }
+  if (event.target && event.target.id === 'apiAllowSessionOnlyAccounts') {
+    state.apiAllowSessionOnlyAccounts = event.target.checked;
+    const byId = apiAccountById();
+    Array.from(state.apiModalIds).forEach(function(id) {
+      const account = byId.get(id);
+      if (!account) return;
+      if (isSessionOnlyExpired(account) || (!state.apiAllowSessionOnlyAccounts && isSessionOnlyAccount(account))) {
+        state.apiModalIds.delete(id);
+      }
+    });
+    renderApiPoolAccounts();
+  }
   if (event.target && event.target.id === 'apiRoutingStrategy') {
     state.apiRoutingStrategy = event.target.value || 'manual';
     renderApiPoolAccounts();
@@ -6078,6 +6123,8 @@ $('apiPoolSelectAllBtn').onclick = function() {
   sortedAccounts().forEach(function(account) {
     if (isApiKeyAccount(account)) return;
     if (state.apiRestrictFreeAccounts && isFreeAccount(account)) return;
+    if (isSessionOnlyExpired(account)) return;
+    if (!state.apiAllowSessionOnlyAccounts && isSessionOnlyAccount(account)) return;
     state.apiModalIds.add(account.id);
   });
   renderApiPoolAccounts();
