@@ -63,6 +63,7 @@ const recentLocalAccessCalls = [];
 let localAccessRequestSequence = 0;
 let lastLocalAccessRequest = null;
 const execFileAsync = promisify(execFile);
+let codexSessionIndexCache = { mtimeMs: 0, names: new Map() };
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -252,6 +253,12 @@ function normalizeDiagnosticText(value, max = 120) {
   return raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').slice(0, max) || null;
 }
 
+function normalizeDiagnosticPath(value, max = 180) {
+  const text = normalizeDiagnosticText(value, max);
+  if (!text) return null;
+  return text.replace(/^\\\\\?\\/, '');
+}
+
 function shortDiagnosticId(value) {
   const raw = String(value || '').trim();
   if (!raw) return null;
@@ -267,13 +274,53 @@ function rowUpdatedAtMs(row) {
   return 0;
 }
 
+function codexSessionIndexNames() {
+  const indexPath = path.join(codexHome(), 'session_index.jsonl');
+  try {
+    const stat = fs.statSync(indexPath);
+    if (codexSessionIndexCache.mtimeMs === stat.mtimeMs) return codexSessionIndexCache.names;
+    const names = new Map();
+    const content = fs.readFileSync(indexPath, 'utf8');
+    for (const line of content.split(/\r?\n/)) {
+      const raw = line.trim();
+      if (!raw) continue;
+      try {
+        const parsed = JSON.parse(raw);
+        const id = String(parsed?.id || '').trim();
+        const name = normalizeDiagnosticText(parsed?.thread_name, 80);
+        if (id && name) names.set(id, name);
+      } catch {}
+    }
+    codexSessionIndexCache = { mtimeMs: stat.mtimeMs, names };
+    return names;
+  } catch {
+    codexSessionIndexCache = { mtimeMs: 0, names: new Map() };
+    return codexSessionIndexCache.names;
+  }
+}
+
+function codexSidebarThreadName(threadId) {
+  const id = String(threadId || '').trim();
+  return id ? (codexSessionIndexNames().get(id) || null) : null;
+}
+
+function fallbackThreadTitle(row) {
+  const title = normalizeDiagnosticText(row?.title, 80);
+  if (!title) return null;
+  const firstLine = title.split(/\s*[\r\n]+\s*/)[0] || title;
+  return normalizeDiagnosticText(firstLine, 80);
+}
+
 function threadDiagnosticsFromRow(row, startedAt) {
   const updatedAtMs = rowUpdatedAtMs(row);
-  const cwd = normalizeDiagnosticText(row?.cwd, 180);
+  const cwd = normalizeDiagnosticPath(row?.cwd, 180);
+  const sidebarTitle = codexSidebarThreadName(row?.id);
   return {
     lookup: 'ok',
     id: shortDiagnosticId(row?.id),
-    title: normalizeDiagnosticText(row?.title, 80),
+    title: sidebarTitle || fallbackThreadTitle(row),
+    sidebarTitle,
+    titleSource: sidebarTitle ? 'session_index' : 'threads',
     cwd,
     project: cwd ? normalizeDiagnosticText(path.basename(cwd), 80) : null,
     source: normalizeDiagnosticText(row?.source || row?.thread_source, 40),
