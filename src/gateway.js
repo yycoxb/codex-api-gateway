@@ -54,10 +54,12 @@ const UPSTREAM_SEND_RETRY_BASE_DELAY_MS = 200;
 const MAX_FALLBACK_DIAGNOSTIC_ATTEMPTS = 12;
 const MAX_RUNTIME_COOLDOWNS = 12;
 const CODEX_THREAD_LOOKUP_WINDOW_MS = 10 * 60 * 1000;
+const MAX_LOCAL_ACCESS_CALL_HISTORY = 50;
 
 const responseAffinity = new Map();
 const modelCooldowns = new Map();
 const activeLocalAccessRequests = new Map();
+const recentLocalAccessCalls = [];
 let localAccessRequestSequence = 0;
 let lastLocalAccessRequest = null;
 const execFileAsync = promisify(execFile);
@@ -543,6 +545,55 @@ function applyServiceTierMode(body, mode = 'normal') {
   };
 }
 
+function recordLocalAccessCall(entry, success = null) {
+  if (!entry) return;
+  const finishedAt = Number(entry.finishedAt || Date.now());
+  const startedAt = Number(entry.startedAt || finishedAt);
+  const request = entry.request || null;
+  recentLocalAccessCalls.unshift({
+    id: entry.requestId || `${finishedAt}_${recentLocalAccessCalls.length}`,
+    account: entry.account || null,
+    target: entry.target || null,
+    model: entry.model || request?.body?.model || null,
+    startedAt,
+    finishedAt,
+    durationMs: Math.max(0, finishedAt - startedAt),
+    success,
+    statusCode: request?.upstream?.statusCode ?? null,
+    request,
+  });
+  if (recentLocalAccessCalls.length > MAX_LOCAL_ACCESS_CALL_HISTORY) {
+    recentLocalAccessCalls.length = MAX_LOCAL_ACCESS_CALL_HISTORY;
+  }
+}
+
+function getLocalAccessCallHistory(limit = 20) {
+  const max = Math.max(1, Math.min(Number(limit || 20), MAX_LOCAL_ACCESS_CALL_HISTORY));
+  return recentLocalAccessCalls.slice(0, max).map((item) => {
+    const request = item.request || {};
+    return {
+      id: item.id,
+      account: item.account || null,
+      target: item.target || request.path || null,
+      model: item.model || request.body?.model || null,
+      startedAt: item.startedAt || null,
+      finishedAt: item.finishedAt || null,
+      durationMs: item.durationMs || null,
+      success: item.success,
+      statusCode: item.statusCode ?? request.upstream?.statusCode ?? null,
+      thread: request.codexThread || null,
+      client: request.client || null,
+      request: {
+        body: request.body || {},
+        headers: request.headers || {},
+        size: request.size || {},
+        upstream: request.upstream || null,
+        responseAffinity: request.responseAffinity || null,
+      },
+    };
+  });
+}
+
 function beginLocalAccessRequest(account, startedAt = Date.now(), meta = {}) {
   if (!account?.id) return null;
   const requestId = `${Date.now()}_${++localAccessRequestSequence}`;
@@ -566,6 +617,7 @@ function beginLocalAccessRequest(account, startedAt = Date.now(), meta = {}) {
       finishedAt: Date.now(),
       updatedAt: Date.now(),
     };
+    recordLocalAccessCall(lastLocalAccessRequest, success);
   };
 }
 
@@ -584,6 +636,7 @@ function getLocalAccessRuntimeState() {
     lastStartedAt: lastLocalAccessRequest?.startedAt || null,
     lastFinishedAt: lastLocalAccessRequest?.finishedAt || null,
     lastSuccess: lastLocalAccessRequest?.success ?? null,
+    callHistory: getLocalAccessCallHistory(),
     cooldowns: cooldownRuntimeState(),
     responseAffinityCount: responseAffinity.size,
   };
@@ -1296,6 +1349,7 @@ async function handleAdmin(req, res, config) {
     codexApp: await getCodexAppState(),
     localAccess: await loadLocalAccessConfig(),
     localAccessRuntime: getLocalAccessRuntimeState(),
+    localAccessCallHistory: getLocalAccessCallHistory(),
     localAccessStats: await loadLocalAccessStats(),
     wakeupSchedule: await loadWakeupSchedule(),
     quotaAutoRefresh: await loadQuotaRefreshSchedule(),

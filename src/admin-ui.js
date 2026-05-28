@@ -1781,6 +1781,49 @@ export function renderAdminHtml() {
       gap: 10px;
     }
 
+    .call-history-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .call-history-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 12px;
+      align-items: start;
+      padding: 14px 16px;
+      border: 1px solid var(--border-light);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .78);
+      font-weight: 850;
+    }
+
+    .call-history-title {
+      min-width: 0;
+      color: var(--text-primary);
+      font-weight: 950;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .call-history-meta,
+    .call-history-sub {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .call-history-sub {
+      color: var(--text-muted);
+    }
+
     .stats-account-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto auto auto auto;
@@ -2839,6 +2882,7 @@ export function renderAdminHtml() {
     .stats-metric,
     .stats-config-card,
     .stats-config-value,
+    .call-history-row,
     .stats-account-row {
       border-color: var(--border-light);
       background: rgba(18, 16, 10, .72);
@@ -3103,6 +3147,7 @@ export function renderAdminHtml() {
       .daily-schedule-row { grid-template-columns: 1fr; }
       .stats-grid,
       .stats-config-grid { grid-template-columns: 1fr; }
+      .call-history-row { grid-template-columns: 1fr; }
       .stats-account-row { grid-template-columns: 1fr; align-items: stretch; }
       .api-pool-row { grid-template-columns: auto minmax(0, 1fr) auto; }
       .api-pool-priority { grid-column: 2 / -1; justify-content: flex-start; }
@@ -3203,6 +3248,7 @@ export function renderAdminHtml() {
             <div class="card-actions">
               <button class="icon-btn" id="copyChatBtn" title="复制 Chat Completions 地址">${icons.copy}</button>
               <button class="icon-btn" id="testModelsBtn" title="API 服务控制面板">${icons.database}</button>
+              <button class="icon-btn" id="apiCallHistoryBtn" title="最近调用线程">${icons.clock}</button>
               <button class="icon-btn" id="reloadBtn" title="刷新">${icons.refresh}</button>
               <button class="icon-btn" id="activateApiServiceBtn" title="写入 Codex App 并重启">${icons.play}</button>
               <button class="icon-btn" id="shutdownBtn" title="停止服务">${icons.power}</button>
@@ -3586,6 +3632,33 @@ export function renderAdminHtml() {
       </div>
       <div class="modal-footer">
         <button id="apiStatsCloseFooterBtn">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="apiCallHistoryModal" aria-hidden="true">
+    <div class="modal stats-modal" role="dialog" aria-modal="true" aria-labelledby="apiCallHistoryModalTitle">
+      <div class="modal-header">
+        <div>
+          <h2 class="modal-title" id="apiCallHistoryModalTitle">${icons.clock} 最近调用线程</h2>
+          <p class="modal-subtitle">记录最近完成的 API 调用，按 Codex 线程更新时间做近似匹配。</p>
+        </div>
+        <div class="stats-header-actions">
+          <button class="icon-btn" id="apiCallHistoryRefreshBtn" title="刷新调用记录">${icons.refresh}</button>
+          <button class="icon-btn" id="apiCallHistoryModalCloseBtn" title="关闭">&times;</button>
+        </div>
+      </div>
+      <div class="modal-body">
+        <section class="stats-section">
+          <h3 class="stats-section-title">${icons.clock} 最近几次调用</h3>
+          <div class="api-health-result">这里只显示线程标题、工作区、模型、状态、账号和本机进程名/PID；不会展示 prompt、输入内容或 token。</div>
+          <div class="call-history-list" id="apiCallHistoryList">
+            <div class="empty-state">暂无 API 调用记录。</div>
+          </div>
+        </section>
+      </div>
+      <div class="modal-footer">
+        <button id="apiCallHistoryCloseFooterBtn">关闭</button>
       </div>
     </div>
   </div>
@@ -4535,30 +4608,6 @@ function requestDiagnosticsHtml(request) {
   if (upstreamBodySize && upstreamBodySize !== bodySize) parts.push('转发=' + upstreamBodySize);
   if (contentLengthSize && contentLengthSize !== bodySize) parts.push('Content-Length=' + contentLengthSize);
   if (request.upstream && request.upstream.statusCode != null) parts.push('upstream=' + statusCodeLabel(request.upstream.statusCode));
-  const codexThread = request.codexThread || {};
-  if (codexThread.title || codexThread.project || codexThread.id) {
-    parts.push('codex.thread≈' + [
-      codexThread.title || 'untitled',
-      codexThread.project || '',
-      codexThread.id ? ('id ' + codexThread.id) : '',
-    ].filter(Boolean).join(' / '));
-  } else if (codexThread.lookup && codexThread.lookup !== 'not_found') {
-    parts.push('codex.thread=' + codexThread.lookup);
-  }
-  const client = request.client || {};
-  const clientProcess = client.process || {};
-  if (clientProcess.name || clientProcess.pid) {
-    parts.push('client.process=' + [
-      clientProcess.name || 'unknown',
-      clientProcess.pid ? ('pid ' + clientProcess.pid) : '',
-    ].filter(Boolean).join(' '));
-  } else if (client.processLookup && client.processLookup !== 'unsupported') {
-    parts.push('client.process=' + client.processLookup);
-  }
-  const connection = client.connection || {};
-  if (connection.remotePort && connection.localPort) {
-    parts.push('client.port=' + connection.remotePort + '->' + connection.localPort);
-  }
   Object.keys(body).slice(0, 10).forEach(function(key) {
     const value = String(body[key]);
     if (!value || value === '[object]') return;
@@ -4898,6 +4947,87 @@ function renderApiStatsPanel() {
   }).join('');
 }
 
+function apiCallHistoryItems() {
+  const data = state.data || {};
+  const runtime = data.localAccessRuntime || {};
+  return Array.isArray(data.localAccessCallHistory)
+    ? data.localAccessCallHistory
+    : (Array.isArray(runtime.callHistory) ? runtime.callHistory : []);
+}
+
+function callThreadTitle(thread) {
+  thread = thread || {};
+  if (thread.title || thread.project || thread.id) {
+    return [
+      thread.title || '未命名线程',
+      thread.project || '',
+      thread.id ? ('id ' + thread.id) : '',
+    ].filter(Boolean).join(' / ');
+  }
+  if (thread.lookup === 'failed') return '线程匹配失败';
+  return '未匹配到 Codex 线程';
+}
+
+function callClientProcessText(client) {
+  client = client || {};
+  const proc = client.process || {};
+  if (proc.name || proc.pid) {
+    return [
+      proc.name || 'unknown',
+      proc.pid ? ('pid ' + proc.pid) : '',
+    ].filter(Boolean).join(' ');
+  }
+  if (client.processLookup && client.processLookup !== 'unsupported') return client.processLookup;
+  return '';
+}
+
+function renderApiCallHistoryPanel() {
+  const list = $('apiCallHistoryList');
+  if (!list) return;
+  const calls = apiCallHistoryItems().slice(0, 20);
+  if (!calls.length) {
+    list.innerHTML = '<div class="empty-state">暂无 API 调用记录。完成一次 /v1 请求后这里会显示。</div>';
+    return;
+  }
+  list.innerHTML = calls.map(function(item) {
+    const thread = item.thread || {};
+    const request = item.request || {};
+    const size = request.size || {};
+    const body = request.body || {};
+    const client = item.client || {};
+    const connection = client.connection || {};
+    const processText = callClientProcessText(client);
+    const status = item.statusCode != null ? statusCodeLabel(item.statusCode) : (item.success === false ? '失败' : '-');
+    const successPill = item.success === false
+      ? '<span class="result-pill fail">失败</span>'
+      : '<span class="result-pill">成功</span>';
+    const model = item.model || body.model || '-';
+    const account = item.account ? maskEmail(item.account.email || item.account.id) : '-';
+    const meta = [
+      '<span class="stats-pill">' + escapeHtml(formatShortDate(item.finishedAt || item.startedAt)) + '</span>',
+      '<span class="stats-pill">' + escapeHtml(status) + '</span>',
+      '<span class="stats-pill">' + escapeHtml(model) + '</span>',
+      '<span class="stats-pill">耗时 ' + escapeHtml(latencyText(item.durationMs)) + '</span>',
+      '<span class="stats-pill">账号 ' + escapeHtml(account) + '</span>',
+    ];
+    const sub = [];
+    if (thread.cwd) sub.push('cwd=' + thread.cwd);
+    if (thread.updatedAgeMs != null) sub.push('匹配偏差≈' + shortDurationText(thread.updatedAgeMs));
+    if (processText) sub.push('process=' + processText);
+    if (connection.remotePort && connection.localPort) sub.push('port=' + connection.remotePort + '->' + connection.localPort);
+    if (item.target) sub.push('target=' + item.target);
+    if (size.bodyBytes != null) sub.push('body=' + formatRequestBytes(size.bodyBytes));
+    return '<div class="call-history-row">' +
+      '<div class="call-history-main">' +
+        '<div class="call-history-title" title="' + escapeHtml(callThreadTitle(thread)) + '">' + escapeHtml(callThreadTitle(thread)) + '</div>' +
+        '<div class="call-history-meta">' + meta.join('') + '</div>' +
+        '<div class="call-history-sub">' + escapeHtml(sub.join(' · ') || '无额外诊断') + '</div>' +
+      '</div>' +
+      '<div>' + successPill + '</div>' +
+    '</div>';
+  }).join('');
+}
+
 function openApiStatsModal() {
   renderApiStatsPanel();
   $('apiStatsModal').classList.add('show');
@@ -4908,6 +5038,19 @@ function closeApiStatsModal() {
   if ($('apiStatsModal')) {
     $('apiStatsModal').classList.remove('show');
     $('apiStatsModal').setAttribute('aria-hidden', 'true');
+  }
+}
+
+function openApiCallHistoryModal() {
+  renderApiCallHistoryPanel();
+  $('apiCallHistoryModal').classList.add('show');
+  $('apiCallHistoryModal').setAttribute('aria-hidden', 'false');
+}
+
+function closeApiCallHistoryModal() {
+  if ($('apiCallHistoryModal')) {
+    $('apiCallHistoryModal').classList.remove('show');
+    $('apiCallHistoryModal').setAttribute('aria-hidden', 'true');
   }
 }
 
@@ -5495,8 +5638,10 @@ async function refreshRuntimeState() {
     if (!res.ok) throw new Error('runtime poll failed: ' + res.status);
     const runtime = await res.json();
     if (state.data) state.data.localAccessRuntime = runtime;
+    if (state.data && Array.isArray(runtime.callHistory)) state.data.localAccessCallHistory = runtime.callHistory;
     renderLocalAccessRuntime();
     applyApiRuntimeState(runtime);
+    renderApiCallHistoryPanel();
     scheduleRuntimePoll(Number(runtime.activeCount || 0) > 0 ? 550 : 900);
   } catch (err) {
     console.warn('[admin] runtime poll failed:', err);
@@ -5547,6 +5692,7 @@ async function loadState() {
   applyApiRuntimeState(state.data.localAccessRuntime || {});
   renderApiPoolAccounts();
   renderApiStatsPanel();
+  renderApiCallHistoryPanel();
   renderQuotaAutoRefresh();
   renderWakeupAccounts();
   renderWakeupStats();
@@ -6134,10 +6280,15 @@ if ($('toggleKeyBtn')) $('toggleKeyBtn').onclick = function() {
 $('copyChatBtn').onclick = function() { copyText(state.data.baseUrl + '/chat/completions'); };
 $('reloadBtn').onclick = loadState;
 $('testModelsBtn').onclick = openApiStatsModal;
+$('apiCallHistoryBtn').onclick = openApiCallHistoryModal;
 $('apiSpeedMode').onchange = saveApiSpeedMode;
 $('apiStatsModalCloseBtn').onclick = closeApiStatsModal;
 $('apiStatsCloseFooterBtn').onclick = closeApiStatsModal;
 $('apiStatsModal').onclick = function(event) { if (event.target === $('apiStatsModal')) closeApiStatsModal(); };
+$('apiCallHistoryModalCloseBtn').onclick = closeApiCallHistoryModal;
+$('apiCallHistoryCloseFooterBtn').onclick = closeApiCallHistoryModal;
+$('apiCallHistoryModal').onclick = function(event) { if (event.target === $('apiCallHistoryModal')) closeApiCallHistoryModal(); };
+$('apiCallHistoryRefreshBtn').onclick = function() { loadState().then(function() { renderApiCallHistoryPanel(); toast('调用记录已刷新'); }); };
 $('apiHealthCheckBtn').onclick = runApiHealthCheck;
 $('apiStatsRefreshBtn').onclick = function() { loadState().then(function() { renderApiStatsPanel(); toast('统计已刷新'); }); };
 $('apiStatsClearBtn').onclick = clearApiStats;
