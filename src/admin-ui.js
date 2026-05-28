@@ -4535,6 +4535,30 @@ function requestDiagnosticsHtml(request) {
   if (upstreamBodySize && upstreamBodySize !== bodySize) parts.push('转发=' + upstreamBodySize);
   if (contentLengthSize && contentLengthSize !== bodySize) parts.push('Content-Length=' + contentLengthSize);
   if (request.upstream && request.upstream.statusCode != null) parts.push('upstream=' + statusCodeLabel(request.upstream.statusCode));
+  const codexThread = request.codexThread || {};
+  if (codexThread.title || codexThread.project || codexThread.id) {
+    parts.push('codex.thread≈' + [
+      codexThread.title || 'untitled',
+      codexThread.project || '',
+      codexThread.id ? ('id ' + codexThread.id) : '',
+    ].filter(Boolean).join(' / '));
+  } else if (codexThread.lookup && codexThread.lookup !== 'not_found') {
+    parts.push('codex.thread=' + codexThread.lookup);
+  }
+  const client = request.client || {};
+  const clientProcess = client.process || {};
+  if (clientProcess.name || clientProcess.pid) {
+    parts.push('client.process=' + [
+      clientProcess.name || 'unknown',
+      clientProcess.pid ? ('pid ' + clientProcess.pid) : '',
+    ].filter(Boolean).join(' '));
+  } else if (client.processLookup && client.processLookup !== 'unsupported') {
+    parts.push('client.process=' + client.processLookup);
+  }
+  const connection = client.connection || {};
+  if (connection.remotePort && connection.localPort) {
+    parts.push('client.port=' + connection.remotePort + '->' + connection.localPort);
+  }
   Object.keys(body).slice(0, 10).forEach(function(key) {
     const value = String(body[key]);
     if (!value || value === '[object]') return;

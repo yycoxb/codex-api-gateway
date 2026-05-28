@@ -1,6 +1,12 @@
 import http from 'node:http';
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
+import { promisify } from 'node:util';
 import { ACCOUNT_PATH, CORS_ALLOW_HEADERS, DEFAULT_CODEX_ORIGINATOR, DEFAULT_CODEX_USER_AGENT, DEFAULT_MODELS, OPENAI_API_BASE, UPSTREAM_BASE } from './constants.js';
 import {
+  codexHome,
   deleteAccount,
   exportAccountsFormatted,
   importFromCodexAuth,
@@ -47,12 +53,14 @@ const UPSTREAM_SEND_RETRY_ATTEMPTS = 2;
 const UPSTREAM_SEND_RETRY_BASE_DELAY_MS = 200;
 const MAX_FALLBACK_DIAGNOSTIC_ATTEMPTS = 12;
 const MAX_RUNTIME_COOLDOWNS = 12;
+const CODEX_THREAD_LOOKUP_WINDOW_MS = 10 * 60 * 1000;
 
 const responseAffinity = new Map();
 const modelCooldowns = new Map();
 const activeLocalAccessRequests = new Map();
 let localAccessRequestSequence = 0;
 let lastLocalAccessRequest = null;
+const execFileAsync = promisify(execFile);
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -158,7 +166,8 @@ function collectSafeDiagnosticFields(value, prefix = '', output = {}) {
     const path = prefix ? `${prefix}.${key}` : key;
     const lower = path.toLowerCase();
     if (/(message|messages|input|prompt|content|instruction|instructions|tool|tools)/i.test(path)) continue;
-    if (/(model|speed|tier|effort|reasoning|priority)/i.test(path)) {
+    if (/(token|secret|key|auth|credential|password|cookie)/i.test(path)) continue;
+    if (/(model|speed|tier|effort|reasoning|priority|thread|conversation|session[_-]?id|cwd|workspace|project|repo|repository|originator|source|client|request[_-]?id)/i.test(path)) {
       output[path] = safeDiagnosticValue(item);
     }
     if (item && typeof item === 'object' && !Array.isArray(item)) {
@@ -211,15 +220,212 @@ function requestSizeDiagnostics(req, body, meta = {}) {
   return output;
 }
 
+function socketConnectionDiagnostics(req) {
+  const socket = req?.socket;
+  if (!socket) return null;
+  const localPort = Number(socket.localPort || 0);
+  const remotePort = Number(socket.remotePort || 0);
+  return {
+    localAddress: socket.localAddress || null,
+    localPort: Number.isFinite(localPort) && localPort > 0 ? localPort : null,
+    remoteAddress: socket.remoteAddress || null,
+    remotePort: Number.isFinite(remotePort) && remotePort > 0 ? remotePort : null,
+  };
+}
+
+function isLoopbackAddress(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  return raw === '127.0.0.1' || raw === '::1' || raw === '::ffff:127.0.0.1' || raw === 'localhost';
+}
+
+function normalizeProcessName(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  return raw.replace(/[^\w .()[\]-]/g, '').slice(0, 80) || null;
+}
+
+function normalizeDiagnosticText(value, max = 120) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  return raw.replace(/[\r\n\t]+/g, ' ').replace(/\s{2,}/g, ' ').slice(0, max) || null;
+}
+
+function shortDiagnosticId(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  if (raw.length <= 16) return raw;
+  return `${raw.slice(0, 8)}...${raw.slice(-6)}`;
+}
+
+function rowUpdatedAtMs(row) {
+  const precise = Number(row?.updated_at_ms || 0);
+  if (Number.isFinite(precise) && precise > 0) return precise;
+  const seconds = Number(row?.updated_at || 0);
+  if (Number.isFinite(seconds) && seconds > 0) return seconds > 100000000000 ? seconds : seconds * 1000;
+  return 0;
+}
+
+function threadDiagnosticsFromRow(row, startedAt) {
+  const updatedAtMs = rowUpdatedAtMs(row);
+  const cwd = normalizeDiagnosticText(row?.cwd, 180);
+  return {
+    lookup: 'ok',
+    id: shortDiagnosticId(row?.id),
+    title: normalizeDiagnosticText(row?.title, 80),
+    cwd,
+    project: cwd ? normalizeDiagnosticText(path.basename(cwd), 80) : null,
+    source: normalizeDiagnosticText(row?.source || row?.thread_source, 40),
+    modelProvider: normalizeDiagnosticText(row?.model_provider, 60),
+    updatedAt: updatedAtMs || null,
+    updatedAgeMs: updatedAtMs && startedAt ? Math.max(0, Math.round(startedAt - updatedAtMs)) : null,
+  };
+}
+
+function lookupRecentCodexThread(startedAt = Date.now()) {
+  const dbPath = path.join(codexHome(), 'state_5.sqlite');
+  if (!fs.existsSync(dbPath)) return { lookup: 'not_found' };
+  let db = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    const rows = db.prepare(`
+      SELECT id, title, cwd, source, model_provider, updated_at, updated_at_ms, thread_source
+      FROM threads
+      WHERE COALESCE(archived, 0) = 0
+      ORDER BY COALESCE(updated_at_ms, updated_at * 1000, created_at_ms, 0) DESC
+      LIMIT 12
+    `).all();
+    let best = null;
+    let bestDistance = Infinity;
+    for (const row of rows) {
+      const updatedAtMs = rowUpdatedAtMs(row);
+      if (!updatedAtMs) continue;
+      const distance = Math.abs(startedAt - updatedAtMs);
+      if (distance < bestDistance) {
+        best = row;
+        bestDistance = distance;
+      }
+    }
+    if (!best || bestDistance > CODEX_THREAD_LOOKUP_WINDOW_MS) return { lookup: 'not_found' };
+    return threadDiagnosticsFromRow(best, startedAt);
+  } catch {
+    return { lookup: 'failed' };
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
+function endpointPort(value) {
+  const raw = String(value || '').trim();
+  const idx = raw.lastIndexOf(':');
+  if (idx < 0) return null;
+  const port = Number(raw.slice(idx + 1));
+  return Number.isFinite(port) && port > 0 ? port : null;
+}
+
+function firstCsvValue(line) {
+  const raw = String(line || '').trim();
+  if (!raw) return null;
+  if (!raw.startsWith('"')) return raw.split(',')[0]?.trim() || null;
+  let value = '';
+  for (let i = 1; i < raw.length; i += 1) {
+    if (raw[i] === '"') {
+      if (raw[i + 1] === '"') {
+        value += '"';
+        i += 1;
+        continue;
+      }
+      break;
+    }
+    value += raw[i];
+  }
+  return value.trim() || null;
+}
+
+async function lookupWindowsClientProcess(connection) {
+  if (process.platform !== 'win32') return null;
+  const serverPort = Number(connection?.localPort || 0);
+  const clientPort = Number(connection?.remotePort || 0);
+  if (!Number.isFinite(serverPort) || !Number.isFinite(clientPort) || serverPort <= 0 || clientPort <= 0) return null;
+
+  try {
+    const { stdout } = await execFileAsync('netstat.exe', ['-ano', '-p', 'TCP'], {
+      timeout: 1800,
+      windowsHide: true,
+      maxBuffer: 1024 * 1024,
+    });
+    let match = null;
+    for (const line of String(stdout || '').split(/\r?\n/)) {
+      const parts = line.trim().split(/\s+/).filter(Boolean);
+      if (parts.length < 5 || parts[0].toUpperCase() !== 'TCP') continue;
+      const pid = Number(parts[parts.length - 1]);
+      const state = parts[parts.length - 2] || null;
+      const foreign = parts[parts.length - 3] || '';
+      const local = parts[parts.length - 4] || '';
+      if (endpointPort(local) === clientPort && endpointPort(foreign) === serverPort) {
+        match = { pid, state };
+        break;
+      }
+    }
+    const pid = Number(match?.pid || 0);
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    let name = null;
+    try {
+      const task = await execFileAsync('tasklist.exe', ['/FO', 'CSV', '/NH', '/FI', `PID eq ${pid}`], {
+        timeout: 1800,
+        windowsHide: true,
+        maxBuffer: 128 * 1024,
+      });
+      const taskLine = String(task.stdout || '').split(/\r?\n/).find((line) => line.trim().startsWith('"'));
+      name = normalizeProcessName(firstCsvValue(taskLine));
+    } catch {}
+    return {
+      pid,
+      name: name || null,
+      state: normalizeProcessName(match.state) || null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function attachClientProcessDiagnostics(req, diagnostics) {
+  if (!diagnostics) return;
+  const connection = socketConnectionDiagnostics(req);
+  if (!connection) return;
+  diagnostics.client = {
+    connection,
+    process: null,
+    processLookup: process.platform === 'win32' && isLoopbackAddress(connection.remoteAddress) ? 'pending' : 'unsupported',
+  };
+  if (diagnostics.client.processLookup !== 'pending') return;
+  lookupWindowsClientProcess(connection)
+    .then((clientProcess) => {
+      if (!diagnostics.client) return;
+      if (clientProcess) {
+        diagnostics.client.process = clientProcess;
+        diagnostics.client.processLookup = 'ok';
+      } else {
+        diagnostics.client.processLookup = 'not_found';
+      }
+    })
+    .catch(() => {
+      if (diagnostics.client) diagnostics.client.processLookup = 'failed';
+    });
+}
+
 function safeRequestDiagnostics(req, body, target, meta = {}) {
   const parsed = parseRequestJson(body) || {};
-  return {
+  const startedAt = Number(meta.startedAt || Date.now());
+  const diagnostics = {
     method: req.method,
     path: target || upstreamPath(req.url) || req.url,
     size: requestSizeDiagnostics(req, body, meta),
     body: collectSafeDiagnosticFields(parsed),
     headers: safeHeaderDiagnostics(req),
+    codexThread: lookupRecentCodexThread(startedAt),
   };
+  attachClientProcessDiagnostics(req, diagnostics);
+  return diagnostics;
 }
 
 function classifyUpstreamFailure(status, bodyText = '') {
@@ -979,6 +1185,7 @@ async function proxyCodexRequest(req, res, body) {
     const serviceTierRewrite = applyServiceTierMode(body, localAccessConfig.serviceTierMode);
     body = serviceTierRewrite.body;
     requestDiagnostics = safeRequestDiagnostics(req, body, target, {
+      startedAt,
       bodyBytes: incomingBodyBytes,
       upstreamBodyBytes: bufferBytes(body),
     });
