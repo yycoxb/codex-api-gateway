@@ -1,11 +1,35 @@
 import { LOCAL_ACCESS_STATS_PATH } from './constants.js';
-import { readJson, writeJson } from './storage.js';
+import { cleanupJsonTempFiles, readJson, writeJson } from './storage.js';
 import { nowMs } from './utils.js';
 
 const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const WEEK_WINDOW_MS = 7 * DAY_WINDOW_MS;
 const MONTH_WINDOW_MS = 30 * DAY_WINDOW_MS;
 const MAX_RECENT_USAGE_EVENTS = 50_000;
+const STATS_TMP_MAX_AGE_MS = 10 * 60 * 1000;
+const STATS_TMP_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+
+let statsWriteQueue = Promise.resolve();
+let lastStatsTmpCleanupAt = 0;
+let statsTmpCleanupPromise = null;
+
+async function cleanupStaleStatsTemps(now = nowMs()) {
+  if (statsTmpCleanupPromise) return statsTmpCleanupPromise;
+  if (now - lastStatsTmpCleanupAt < STATS_TMP_CLEANUP_INTERVAL_MS) return null;
+  lastStatsTmpCleanupAt = now;
+  statsTmpCleanupPromise = cleanupJsonTempFiles(LOCAL_ACCESS_STATS_PATH, {
+    maxAgeMs: STATS_TMP_MAX_AGE_MS,
+  }).catch(() => null).finally(() => {
+    statsTmpCleanupPromise = null;
+  });
+  return statsTmpCleanupPromise;
+}
+
+function enqueueStatsWrite(task) {
+  const next = statsWriteQueue.then(task, task);
+  statsWriteQueue = next.catch(() => {});
+  return next;
+}
 
 function emptyUsageStats() {
   return {
@@ -366,16 +390,20 @@ function normalizeStats(raw) {
 }
 
 export async function loadLocalAccessStats() {
+  await cleanupStaleStatsTemps();
   return normalizeStats(await readJson(LOCAL_ACCESS_STATS_PATH, null));
 }
 
 export async function clearLocalAccessStats() {
-  const stats = emptyStatsSnapshot();
-  await writeJson(LOCAL_ACCESS_STATS_PATH, stats);
-  return stats;
+  return enqueueStatsWrite(async () => {
+    await cleanupStaleStatsTemps();
+    const stats = emptyStatsSnapshot();
+    await writeJson(LOCAL_ACCESS_STATS_PATH, stats, { space: 0 });
+    return stats;
+  });
 }
 
-export async function recordLocalAccessStats({
+async function recordLocalAccessStatsNow({
   accountId,
   email,
   success,
@@ -385,6 +413,7 @@ export async function recordLocalAccessStats({
   failureReason,
   attempts,
 } = {}) {
+  await cleanupStaleStatsTemps();
   const stats = await loadLocalAccessStats();
   const now = nowMs();
   const normalizedUsage = usage ? normalizeUsage(usage) : null;
@@ -417,6 +446,10 @@ export async function recordLocalAccessStats({
   });
   sortAccountStats(stats.accounts);
   recomputeTimeWindows(stats, now);
-  await writeJson(LOCAL_ACCESS_STATS_PATH, stats);
+  await writeJson(LOCAL_ACCESS_STATS_PATH, stats, { space: 0 });
   return stats;
+}
+
+export async function recordLocalAccessStats(payload = {}) {
+  return enqueueStatsWrite(() => recordLocalAccessStatsNow(payload));
 }
