@@ -1,4 +1,4 @@
-﻿import { CORS_ALLOW_HEADERS, DEFAULT_MODELS } from './constants.js';
+﻿import { CODEX_AUTO_REVIEW_MODEL_ID, CORS_ALLOW_HEADERS, DEFAULT_MODELS } from './constants.js';
 
 export function jsonResponse(res, status, payload) {
   const body = Buffer.from(JSON.stringify(payload, null, 2));
@@ -66,7 +66,72 @@ export async function readBody(req, limit = defaultBodyLimitBytes()) {
   return Buffer.concat(chunks);
 }
 
-export function localModels() {
+const CODEX_CLIENT_HIDDEN_MODELS = new Set([
+  CODEX_AUTO_REVIEW_MODEL_ID,
+  'gpt-image-2',
+]);
+
+const CODEX_CLIENT_REASONING_LEVELS = [
+  { effort: 'minimal', description: 'Fastest responses with minimal reasoning' },
+  { effort: 'low', description: 'Fast responses with lighter reasoning' },
+  { effort: 'medium', description: 'Balances speed and reasoning depth for everyday tasks' },
+  { effort: 'high', description: 'Greater reasoning depth for complex problems' },
+  { effort: 'xhigh', description: 'Extra high reasoning depth for complex problems' },
+];
+
+const CODEX_CLIENT_DISPLAY_NAMES = new Map([
+  ['gpt-5.5', 'GPT-5.5'],
+  ['gpt-5-codex', 'GPT-5 Codex'],
+  ['gpt-5-codex-mini', 'GPT-5 Codex Mini'],
+  ['gpt-5.4', 'GPT-5.4'],
+  ['gpt-5.4-mini', 'GPT-5.4 Mini'],
+  ['gpt-5.3-codex', 'GPT-5.3 Codex'],
+  ['gpt-5.3-codex-spark', 'GPT-5.3 Codex Spark'],
+  ['gpt-5.2', 'GPT-5.2'],
+  ['gpt-5.2-codex', 'GPT-5.2 Codex'],
+  ['gpt-5.1-codex-max', 'GPT-5.1 Codex Max'],
+  ['gpt-5.1-codex-mini', 'GPT-5.1 Codex Mini'],
+  ['gpt-image-2', 'GPT Image 2'],
+  [CODEX_AUTO_REVIEW_MODEL_ID, 'Codex Auto Review'],
+]);
+
+function isCodexClientModelsRequest(reqUrl) {
+  if (!reqUrl) return false;
+  try {
+    const url = new URL(String(reqUrl), 'http://localhost');
+    return url.searchParams.has('client_version');
+  } catch {
+    return false;
+  }
+}
+
+function displayNameForModel(id) {
+  return CODEX_CLIENT_DISPLAY_NAMES.get(id) || String(id || '').replace(/-/g, ' ');
+}
+
+function codexClientModel(id) {
+  const displayName = displayNameForModel(id);
+  return {
+    slug: id,
+    display_name: displayName,
+    description: `${displayName} via Codex API Gateway`,
+    context_window: 272000,
+    max_context_window: 1000000,
+    default_reasoning_level: 'medium',
+    supported_reasoning_levels: CODEX_CLIENT_REASONING_LEVELS.map((item) => ({ ...item })),
+    prefer_websockets: true,
+    visibility: CODEX_CLIENT_HIDDEN_MODELS.has(id) ? 'hide' : 'show',
+  };
+}
+
+function codexClientModels() {
+  return {
+    models: DEFAULT_MODELS.map((id) => codexClientModel(id)),
+  };
+}
+
+export function localModels(reqUrl = '') {
+  if (isCodexClientModelsRequest(reqUrl)) return codexClientModels();
   return {
     object: 'list',
     data: DEFAULT_MODELS.map((id) => ({ id, object: 'model', created: 0, owned_by: 'openai' })),

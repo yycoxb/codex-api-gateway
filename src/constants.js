@@ -39,6 +39,8 @@ export const CORS_ALLOW_HEADERS = [
   'OpenAI-Project',
 ].join(', ');
 
+export const CODEX_AUTO_REVIEW_MODEL_ID = 'codex-auto-review';
+
 export const DEFAULT_MODELS = [
   'gpt-5.5',
   'gpt-5-codex',
@@ -52,4 +54,5 @@ export const DEFAULT_MODELS = [
   'gpt-5.1-codex-max',
   'gpt-5.1-codex-mini',
   'gpt-image-2',
+  CODEX_AUTO_REVIEW_MODEL_ID,
 ];

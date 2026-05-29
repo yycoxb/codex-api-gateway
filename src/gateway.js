@@ -1846,7 +1846,7 @@ export function createServer(config) {
       if (key !== config.apiKey) return jsonResponse(res, 401, { error: 'Invalid or missing API key' });
 
       if (req.method === 'GET' && (u.pathname === '/v1/models' || u.pathname.startsWith('/v1/models/'))) {
-        return jsonResponse(res, 200, localModels());
+        return jsonResponse(res, 200, localModels(req.url));
       }
 
       if (!['GET', 'POST'].includes(req.method)) return jsonResponse(res, 405, { error: 'Only GET and POST are allowed' });
