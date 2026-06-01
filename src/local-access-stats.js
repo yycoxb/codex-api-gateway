@@ -61,6 +61,7 @@ function emptyStatsSnapshot(now = nowMs()) {
     updatedAt: now,
     totals: emptyUsageStats(),
     accounts: [],
+    failureClearedAtByAccount: {},
     daily: emptyStatsWindow(now - DAY_WINDOW_MS, now),
     weekly: emptyStatsWindow(now - WEEK_WINDOW_MS, now),
     monthly: emptyStatsWindow(now - MONTH_WINDOW_MS, now),
@@ -120,6 +121,17 @@ function normalizeFailure(value) {
     cooldownMs: positiveInteger(value.cooldownMs || value.cooldown_ms),
     skipped: value.skipped === true,
   };
+}
+
+function normalizeFailureClearedAtByAccount(value) {
+  const output = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return output;
+  for (const [accountId, timestamp] of Object.entries(value)) {
+    const id = String(accountId || '').trim();
+    const clearedAt = positiveInteger(timestamp);
+    if (id && clearedAt) output[id] = clearedAt;
+  }
+  return output;
 }
 
 function normalizeUsage(usage = {}) {
@@ -372,6 +384,9 @@ function normalizeStats(raw) {
   stats.updatedAt = positiveInteger(stats.updatedAt) || stats.since;
   stats.totals = { ...emptyUsageStats(), ...(stats.totals || {}) };
   stats.totals.statusCodes = normalizeStatusCodes(stats.totals.statusCodes);
+  stats.failureClearedAtByAccount = normalizeFailureClearedAtByAccount(
+    stats.failureClearedAtByAccount || stats.failure_cleared_at_by_account,
+  );
   stats.accounts = Array.isArray(stats.accounts) ? stats.accounts : [];
   stats.accounts = stats.accounts.map((item) => ({
     accountId: String(item.accountId || item.account_id || '').trim(),
@@ -398,6 +413,29 @@ export async function clearLocalAccessStats() {
   return enqueueStatsWrite(async () => {
     await cleanupStaleStatsTemps();
     const stats = emptyStatsSnapshot();
+    await writeJson(LOCAL_ACCESS_STATS_PATH, stats, { space: 0 });
+    return stats;
+  });
+}
+
+export async function clearLocalAccessAccountFailure(accountId) {
+  const id = String(accountId || '').trim();
+  if (!id) throw new Error('missing accountId');
+  return enqueueStatsWrite(async () => {
+    await cleanupStaleStatsTemps();
+    const stats = normalizeStats(await readJson(LOCAL_ACCESS_STATS_PATH, null));
+    const now = nowMs();
+    stats.failureClearedAtByAccount = {
+      ...(stats.failureClearedAtByAccount || {}),
+      [id]: now,
+    };
+    for (const group of [stats.accounts, stats.daily?.accounts, stats.weekly?.accounts, stats.monthly?.accounts]) {
+      if (!Array.isArray(group)) continue;
+      for (const item of group) {
+        if (String(item.accountId || '').trim() === id) item.recentFailure = null;
+      }
+    }
+    stats.updatedAt = now;
     await writeJson(LOCAL_ACCESS_STATS_PATH, stats, { space: 0 });
     return stats;
   });

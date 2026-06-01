@@ -36,7 +36,7 @@ import { loadQuotaRefreshSchedule, refreshAccountQuota, refreshAccountQuotas, ru
 import { getCodexAppState, saveCodexQuickConfig, switchCodexAppAccount, activateCodexApiService } from './codex-app.js';
 import { scheduleCodexAppRestart, scheduleCodexAppRestartWithTask } from './codex-process.js';
 import { getProxyAccountIdsForRequest, loadLocalAccessConfig, saveLocalAccessConfig } from './local-access.js';
-import { clearLocalAccessStats, extractUsageCapture, loadLocalAccessStats, recordLocalAccessStats } from './local-access-stats.js';
+import { clearLocalAccessAccountFailure, clearLocalAccessStats, extractUsageCapture, loadLocalAccessStats, recordLocalAccessStats } from './local-access-stats.js';
 import { repairSessionVisibility } from './session-visibility.js';
 import { getTokenKeeperState, runTokenKeeperNow } from './token-keeper.js';
 import {
@@ -1591,6 +1591,13 @@ async function handleClearLocalAccessStats(req, res) {
   return jsonResponse(res, 200, { ok: true, stats: await clearLocalAccessStats() });
 }
 
+async function handleClearLocalAccessAccountFailure(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  if (!payload.accountId) return jsonResponse(res, 400, { error: 'missing accountId' });
+  return jsonResponse(res, 200, { ok: true, stats: await clearLocalAccessAccountFailure(payload.accountId) });
+}
+
 async function handleLocalAccessRuntime(req, res) {
   return jsonResponse(res, 200, getLocalAccessRuntimeState());
 }
@@ -1835,6 +1842,7 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/health') return await handleLocalAccessHealth(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/local-access/stats') return await handleLocalAccessStats(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear') return await handleClearLocalAccessStats(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear-account-failure') return await handleClearLocalAccessAccountFailure(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/codex-app/state') return await handleCodexAppState(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/switch') return await handleCodexAppSwitch(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/api-service') return await handleCodexAppApiService(req, res, config);

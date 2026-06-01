@@ -2171,6 +2171,25 @@ export function renderAdminHtml() {
       font-weight: 800;
     }
 
+    .account-status-alert .alert-clear {
+      margin-left: auto;
+      border: 1px solid rgba(245, 158, 11, .28);
+      background: rgba(255, 255, 255, .36);
+      color: inherit;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font: inherit;
+      font-size: 11px;
+      line-height: 1;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+
+    .account-status-alert .alert-clear:hover {
+      background: rgba(255, 255, 255, .62);
+      border-color: rgba(245, 158, 11, .52);
+    }
+
     .ghcp-account-card.account-stale {
       height: auto;
       min-height: var(--overview-card-height, 452px);
@@ -4123,6 +4142,13 @@ function quotaDiagnosticText(account) {
   return '';
 }
 
+function accountFailureClearedAt(account) {
+  if (!account || !state.data) return 0;
+  const stats = state.data.localAccessStats || {};
+  const marks = stats.failureClearedAtByAccount || stats.failure_cleared_at_by_account || {};
+  return Number(marks[String(account.id || '').trim()] || 0) || 0;
+}
+
 function accountRecentApiFailure(account) {
   if (!account || !state.data) return null;
   const stats = state.data.localAccessStats || {};
@@ -4134,6 +4160,7 @@ function accountRecentApiFailure(account) {
   ].filter(Array.isArray);
   const accountId = String(account.id || '').trim();
   const email = String(account.email || '').trim().toLowerCase();
+  const clearedAt = accountFailureClearedAt(account);
   let found = null;
   groups.forEach(function(items) {
     items.forEach(function(item) {
@@ -4143,6 +4170,7 @@ function accountRecentApiFailure(account) {
       if (!itemId && email && itemEmail && itemEmail !== email) return;
       if (!item.recentFailure) return;
       const timestamp = Number(item.recentFailure.timestamp || item.updatedAt || 0);
+      if (clearedAt && timestamp && timestamp <= clearedAt) return;
       if (!found || timestamp >= Number(found.timestamp || 0)) {
         found = { ...item.recentFailure, timestamp: timestamp };
       }
@@ -4186,6 +4214,7 @@ function accountStatusIssue(account) {
   if (account.requiresReauth) {
     return {
       tone: 'danger',
+      source: 'reauth',
       title: '授权需要重新登录',
       detail: safeIssueText(account.reauthReason || 'token refresh failed'),
     };
@@ -4197,6 +4226,7 @@ function accountStatusIssue(account) {
   if (failure && failure.reason && isAccountSpecificApiFailure(failure)) {
     return {
       tone: 'warn',
+      source: 'api_recent_failure',
       title: 'API 最近失败',
       detail: safeIssueText(statusCodeLabel(failure.statusCode) + ' · ' + failure.reason),
     };
@@ -4207,9 +4237,13 @@ function accountStatusIssue(account) {
 function accountStatusAlertHtml(account) {
   const issue = accountStatusIssue(account);
   if (!issue) return '';
+  const clearButton = issue.source === 'api_recent_failure'
+    ? '<button class="alert-clear" data-clear-api-failure="' + escapeHtml(account.id) + '" title="清除这条 API 失败提示">清除</button>'
+    : '';
   return '<div class="account-status-alert ' + escapeHtml(issue.tone || 'warn') + '" title="' + escapeHtml(issue.detail || '') + '">' +
     '<span>⚠ ' + escapeHtml(issue.title) + '</span>' +
     (issue.detail ? '<span class="alert-detail">' + escapeHtml(issue.detail) + '</span>' : '') +
+    clearButton +
   '</div>';
 }
 
@@ -5084,6 +5118,24 @@ async function clearApiStats() {
   await loadState();
   setOutput(data);
   toast('API 服务统计已清除');
+}
+
+
+async function clearAccountApiFailure(accountId) {
+  if (!accountId) return;
+  const res = await fetch('/_admin/local-access/stats/clear-account-failure', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ accountId: accountId }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'clear account API failure failed');
+  if (data.stats) state.data.localAccessStats = data.stats;
+  renderAccounts();
+  renderApiStatsPanel();
+  renderApiPoolAccounts();
+  await loadState();
+  toast('\u5df2\u6e05\u9664\u8be5\u8d26\u53f7\u6700\u8fd1 API \u5931\u8d25\u63d0\u793a');
 }
 
 function renderApiHealthResult() {
@@ -6181,6 +6233,16 @@ document.addEventListener('click', function(event) {
   if (switchCodexAppId) switchCodexAppAccount(switchCodexAppId);
   const refreshId = target && target.dataset && target.dataset.refreshQuota;
   if (refreshId) refreshQuota([refreshId]);
+  const clearApiFailureId = target && target.dataset && target.dataset.clearApiFailure;
+  if (clearApiFailureId) {
+    event.preventDefault();
+    event.stopPropagation();
+    clearAccountApiFailure(clearApiFailureId).catch(function(err) {
+      toast('清除失败');
+      setOutput(String(err.message || err));
+    });
+    return;
+  }
   const exportId = target && target.dataset && target.dataset.exportAccount;
   if (exportId) exportAccountsJson([exportId]);
   const moveDirection = target && target.dataset && target.dataset.moveAccount;
