@@ -531,6 +531,22 @@ export function renderAdminHtml() {
       }
     }
 
+    @keyframes personal-card-pulse {
+      0%, 100% {
+        box-shadow:
+          0 0 0 1px rgba(245, 208, 111, .26),
+          0 0 0 3px rgba(212, 175, 55, .10),
+          0 18px 44px rgba(0, 0, 0, .42);
+      }
+      50% {
+        box-shadow:
+          0 0 0 1px rgba(245, 208, 111, .50),
+          0 0 30px rgba(245, 208, 111, .20),
+          0 0 58px rgba(255, 214, 90, .10),
+          0 22px 58px rgba(0, 0, 0, .48);
+      }
+    }
+
     @keyframes pro-badge-shine {
       0%, 58%, 100% { transform: translateX(-150%) skewX(-18deg); opacity: 0; }
       70% { opacity: .95; }
@@ -2665,6 +2681,42 @@ export function renderAdminHtml() {
         0 22px 58px rgba(0, 0, 0, .48);
     }
 
+    .ghcp-account-card.personal-using {
+      border-color: rgba(245, 208, 111, .78);
+      background:
+        radial-gradient(circle at 100% 0%, rgba(255, 214, 90, .18), transparent 38%),
+        radial-gradient(circle at 0% 100%, rgba(110, 231, 183, .09), transparent 34%),
+        linear-gradient(180deg, rgba(37, 29, 12, .96), rgba(14, 12, 7, .93));
+      animation: personal-card-pulse 3s ease-in-out infinite;
+    }
+
+    .ghcp-account-card.personal-using::after {
+      content: '';
+      position: absolute;
+      z-index: 0;
+      top: -20%;
+      bottom: -20%;
+      left: -45%;
+      width: 42%;
+      background:
+        linear-gradient(90deg, transparent, rgba(255, 247, 194, .10), rgba(245, 208, 111, .24), transparent);
+      filter: blur(1px);
+      pointer-events: none;
+      animation: api-card-flow 3.6s linear infinite;
+    }
+
+    .ghcp-account-card.personal-using > * {
+      position: relative;
+      z-index: 1;
+    }
+
+    .ghcp-account-card.personal-using .personal-current-tag {
+      color: #2a1803;
+      border-color: rgba(245, 208, 111, .58);
+      background: linear-gradient(135deg, #fff4b8, #f5d06f 45%, #d4af37);
+      box-shadow: 0 0 20px rgba(245, 208, 111, .24);
+    }
+
     .ghcp-account-card.api-using {
       border-color: rgba(110, 231, 183, .56);
       background:
@@ -2720,7 +2772,7 @@ export function renderAdminHtml() {
       animation: pro-card-crown-line 4.2s ease-in-out infinite;
     }
 
-    .ghcp-account-card.plan-pro:not(.api-using)::after {
+    .ghcp-account-card.plan-pro:not(.api-using):not(.personal-using)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -2767,7 +2819,7 @@ export function renderAdminHtml() {
       animation: plus-card-silver-line 5.2s ease-in-out infinite;
     }
 
-    .ghcp-account-card.plan-plus:not(.api-using)::after {
+    .ghcp-account-card.plan-plus:not(.api-using):not(.personal-using)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -2811,7 +2863,7 @@ export function renderAdminHtml() {
       opacity: .86;
     }
 
-    .ghcp-account-card.plan-team::after {
+    .ghcp-account-card.plan-team:not(.api-using):not(.personal-using)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -3175,6 +3227,8 @@ export function renderAdminHtml() {
     @media (prefers-reduced-motion: reduce) {
       .ghcp-account-card.api-using,
       .ghcp-account-card.api-using::after,
+      .ghcp-account-card.personal-using,
+      .ghcp-account-card.personal-using::after,
       .tier-badge.pro,
       .tier-badge.pro::after,
       .ghcp-account-card.plan-pro::before,
@@ -4780,10 +4834,15 @@ function applyApiRuntimeState(runtime) {
   const activeId = runtime.currentAccount && runtime.currentAccount.id;
   const visualId = visualAccount && visualAccount.id;
   const visualLabel = activeId ? 'API使用中' : '刚刚使用';
+  const currentId = visualCurrentAccountId();
   document.querySelectorAll('.acct-card[data-account-id]').forEach(function(card) {
     const isUsing = !!visualId && card.dataset.accountId === visualId;
+    const isCurrent = !!currentId && card.dataset.accountId === currentId;
     card.classList.toggle('api-using', isUsing);
+    card.classList.toggle('personal-using', isCurrent && !isUsing);
     const existing = card.querySelector('[data-runtime-api-using]');
+    const personalBadge = card.querySelector('[data-personal-current]');
+    const currentBadge = card.querySelector('[data-account-current]');
     if (isUsing && !existing) {
       const badges = card.querySelector('.badges');
       if (badges) badges.insertAdjacentHTML('afterbegin', '<span class="current-tag" data-runtime-api-using>' + visualLabel + '</span>');
@@ -4791,6 +4850,11 @@ function applyApiRuntimeState(runtime) {
       existing.textContent = visualLabel;
     } else if (!isUsing && existing) {
       existing.remove();
+    }
+    if (isUsing && personalBadge) {
+      personalBadge.outerHTML = '<span class="current-tag" data-account-current>当前</span>';
+    } else if (!isUsing && isCurrent && currentBadge) {
+      currentBadge.outerHTML = '<span class="current-tag personal-current-tag" data-personal-current>个人使用中</span>';
     }
   });
 }
@@ -5335,15 +5399,16 @@ function renderAccounts() {
     const current = account.id === currentId;
     const apiMember = apiServiceActive && localAccessIds.has(account.id);
     const apiUsing = apiServiceActive && activeApiAccountId === account.id;
+    const personalUsing = current && !apiUsing;
     const selected = state.selectedWakeupIds.has(account.id);
     const plan = planLabel(account.planType);
     const created = account.createdAt || account.importedAt || account.updatedAt || account.lastUsedAt;
     const statusIssue = Boolean(accountStatusIssue(account));
-    return '<section class="ghcp-account-card acct-card ' + accountCardPlanClass(plan) + ' ' + (statusIssue ? 'account-stale ' : '') + (current ? 'current ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
+    return '<section class="ghcp-account-card acct-card ' + accountCardPlanClass(plan) + ' ' + (statusIssue ? 'account-stale ' : '') + (current ? 'current ' : '') + (personalUsing ? 'personal-using ' : '') + (selected ? 'selected ' : '') + (apiUsing ? 'api-using ' : '') + '" data-account-id="' + escapeHtml(account.id) + '">' +
       '<span class="card-light-follow" aria-hidden="true"></span>' +
       '<div class="account-top">' +
         '<div class="account-title"><input type="checkbox" class="wakeup-account" data-wakeup-select value="' + escapeHtml(account.id) + '"' + (selected ? ' checked' : '') + '><div class="account-email" title="' + escapeHtml(account.email || '') + '">' + escapeHtml(maskEmail(account.email)) + '</div></div>' +
-        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (current ? '<span class="current-tag">当前</span>' : '') + (apiMember ? '<span class="member-tag">API成员</span>' : '') + (isSessionOnlyAccount(account) ? '<span class="member-tag">短期Session</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
+        '<div class="badges">' + (apiUsing ? '<span class="current-tag" data-runtime-api-using>' + apiUsingLabel + '</span>' : '') + (personalUsing ? '<span class="current-tag personal-current-tag" data-personal-current>个人使用中</span>' : (current ? '<span class="current-tag" data-account-current>当前</span>' : '')) + (apiMember ? '<span class="member-tag">API成员</span>' : '') + (isSessionOnlyAccount(account) ? '<span class="member-tag">短期Session</span>' : '') + '<span class="tier-badge ' + planBadgeClass(plan) + '">' + escapeHtml(plan) + '</span></div>' +
       '</div>' +
       '<div class="account-meta">' +
         '<div class="small-line">Team Name：<b>' + escapeHtml(teamLabel(account.teamName)) + '</b></div>' +
