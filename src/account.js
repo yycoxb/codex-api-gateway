@@ -408,6 +408,7 @@ function summarizeQuota(quota) {
     weekly_reset_time: quota.weekly_reset_time,
     weekly_window_minutes: quota.weekly_window_minutes,
     weekly_window_present: quota.weekly_window_present,
+    diagnostics: quota.diagnostics || null,
   };
 }
 

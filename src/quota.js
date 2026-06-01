@@ -34,6 +34,44 @@ function resetTime(window) {
   return null;
 }
 
+function objectKeys(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return [];
+  return Object.keys(value).sort().slice(0, 80);
+}
+
+function windowDiagnostics(window) {
+  const present = Boolean(window && typeof window === 'object' && !Array.isArray(window));
+  return {
+    present,
+    keys: objectKeys(window),
+    hasUsedPercent: present && Object.prototype.hasOwnProperty.call(window, 'used_percent'),
+    hasLimitWindowSeconds: present && Object.prototype.hasOwnProperty.call(window, 'limit_window_seconds'),
+    hasResetAfterSeconds: present && Object.prototype.hasOwnProperty.call(window, 'reset_after_seconds'),
+    hasResetAt: present && Object.prototype.hasOwnProperty.call(window, 'reset_at'),
+  };
+}
+
+function usageShapeDiagnostics(usage, meta = {}) {
+  const rateLimit = usage?.rate_limit;
+  const codeReviewRateLimit = usage?.code_review_rate_limit;
+  return {
+    endpoint: 'wham/usage',
+    statusCode: meta.statusCode || 200,
+    bodyLength: Number(meta.bodyLength || 0) || 0,
+    planType: String(usage?.plan_type || '').trim().slice(0, 80) || null,
+    topLevelKeys: objectKeys(usage),
+    hasRateLimit: Boolean(rateLimit && typeof rateLimit === 'object' && !Array.isArray(rateLimit)),
+    rateLimitKeys: objectKeys(rateLimit),
+    primaryWindow: windowDiagnostics(rateLimit?.primary_window),
+    secondaryWindow: windowDiagnostics(rateLimit?.secondary_window),
+    hasCodeReviewRateLimit: Boolean(codeReviewRateLimit && typeof codeReviewRateLimit === 'object' && !Array.isArray(codeReviewRateLimit)),
+    codeReviewRateLimitKeys: objectKeys(codeReviewRateLimit),
+    codeReviewPrimaryWindow: windowDiagnostics(codeReviewRateLimit?.primary_window),
+    codeReviewSecondaryWindow: windowDiagnostics(codeReviewRateLimit?.secondary_window),
+    capturedAt: nowMs(),
+  };
+}
+
 function normalizePlanFamily(planType) {
   const normalized = String(planType || '').trim().toLowerCase().replace(/[_\s-]+/g, '');
   if (!normalized) return null;
@@ -65,7 +103,7 @@ function clearStaleSubscriptionExpiry(account, previousPlan, nextPlan) {
   return true;
 }
 
-function parseQuotaFromUsage(usage) {
+function parseQuotaFromUsage(usage, diagnostics = null) {
   const rateLimit = usage?.rate_limit || {};
   const primary = rateLimit.primary_window || null;
   const secondary = rateLimit.secondary_window || null;
@@ -79,6 +117,7 @@ function parseQuotaFromUsage(usage) {
     weekly_reset_time: secondary ? resetTime(secondary) : null,
     weekly_window_minutes: secondary ? windowMinutes(secondary) : null,
     weekly_window_present: Boolean(secondary),
+    diagnostics,
     raw_data: usage,
   };
 }
@@ -131,7 +170,14 @@ async function fetchQuota(account) {
   }
 
   try {
-    return JSON.parse(text);
+    const usage = JSON.parse(text);
+    return {
+      usage,
+      diagnostics: usageShapeDiagnostics(usage, {
+        statusCode: resp.status,
+        bodyLength: text.length,
+      }),
+    };
   } catch (err) {
     throw new Error(`用量 JSON 解析失败: ${err.message}`);
   }
@@ -142,15 +188,16 @@ export async function refreshAccountQuota(accountId) {
 
   try {
     account = await refreshAccountIfNeeded(account);
-    let usage;
+    let usageResult;
     try {
-      usage = await fetchQuota(account);
+      usageResult = await fetchQuota(account);
     } catch (err) {
       if (!isTokenInvalidatedQuotaError(err)) throw err;
       account = await refreshAccountIfNeeded(account, true);
-      usage = await fetchQuota(account);
+      usageResult = await fetchQuota(account);
     }
-    const quota = parseQuotaFromUsage(usage);
+    const usage = usageResult.usage;
+    const quota = parseQuotaFromUsage(usage, usageResult.diagnostics);
 
     account.quota = quota;
     account.quotaError = null;
@@ -181,6 +228,7 @@ export async function refreshAccountQuota(accountId) {
           weekly_reset_time: quota.weekly_reset_time,
           weekly_window_minutes: quota.weekly_window_minutes,
           weekly_window_present: quota.weekly_window_present,
+          diagnostics: quota.diagnostics,
         },
         usageUpdatedAt: account.usageUpdatedAt,
       },

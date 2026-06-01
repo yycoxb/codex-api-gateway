@@ -4103,6 +4103,26 @@ function quotaWindows(account) {
   return windows;
 }
 
+function quotaDiagnosticText(account) {
+  const diagnostics = account && account.quota && account.quota.diagnostics;
+  if (!diagnostics) return '';
+  const topLevelKeys = Array.isArray(diagnostics.topLevelKeys) ? diagnostics.topLevelKeys.join(', ') : '';
+  const rateLimitKeys = Array.isArray(diagnostics.rateLimitKeys) ? diagnostics.rateLimitKeys.join(', ') : '';
+  const codeReviewKeys = Array.isArray(diagnostics.codeReviewRateLimitKeys) ? diagnostics.codeReviewRateLimitKeys.join(', ') : '';
+  const hasPrimary = diagnostics.primaryWindow && diagnostics.primaryWindow.present;
+  const hasSecondary = diagnostics.secondaryWindow && diagnostics.secondaryWindow.present;
+  if (!diagnostics.hasRateLimit) {
+    return '\u7528\u91cf\u63a5\u53e3\u672a\u8fd4\u56de rate_limit' + (topLevelKeys ? '\uff1b\u5b57\u6bb5\uff1a' + topLevelKeys : '');
+  }
+  if (!hasPrimary && !hasSecondary) {
+    return '\u7528\u91cf\u63a5\u53e3\u672a\u8fd4\u56de 5h/Weekly \u7a97\u53e3' + (rateLimitKeys ? '\uff1brate_limit \u5b57\u6bb5\uff1a' + rateLimitKeys : '');
+  }
+  if (diagnostics.hasCodeReviewRateLimit && codeReviewKeys) {
+    return '\u53e6\u6709 code_review_rate_limit \u5b57\u6bb5\uff1a' + codeReviewKeys;
+  }
+  return '';
+}
+
 function accountRecentApiFailure(account) {
   if (!account || !state.data) return null;
   const stats = state.data.localAccessStats || {};
@@ -4205,7 +4225,8 @@ function quotaSectionHtml(account) {
   if (stale && parts.length) {
     parts.unshift('<div class="small-line warn">下面额度是上次成功刷新缓存，当前状态待验证</div>');
   } else if (!parts.length) {
-    parts.push('<div class="small-line">未获得用量信息</div>');
+    const diagnostic = quotaDiagnosticText(account);
+    parts.push('<div class="small-line">' + escapeHtml(diagnostic || '未获得用量信息') + '</div>');
   } else if (plan !== 'FREE') {
     if (!hasHourly) parts.push('<div class="small-line">未获得 5h 用量信息</div>');
     if (!hasWeekly) parts.push('<div class="small-line">未获得 Weekly 用量信息</div>');
