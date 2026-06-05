@@ -2681,7 +2681,8 @@ export function renderAdminHtml() {
         0 22px 58px rgba(0, 0, 0, .48);
     }
 
-    .ghcp-account-card.personal-using {
+    .ghcp-account-card.personal-using,
+    .ghcp-account-card.current:not(.api-using) {
       border-color: rgba(245, 208, 111, .78);
       background:
         radial-gradient(circle at 100% 0%, rgba(255, 214, 90, .18), transparent 38%),
@@ -2690,7 +2691,8 @@ export function renderAdminHtml() {
       animation: personal-card-pulse 3s ease-in-out infinite;
     }
 
-    .ghcp-account-card.personal-using::after {
+    .ghcp-account-card.personal-using::after,
+    .ghcp-account-card.current:not(.api-using)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -2705,12 +2707,14 @@ export function renderAdminHtml() {
       animation: api-card-flow 3.6s linear infinite;
     }
 
-    .ghcp-account-card.personal-using > * {
+    .ghcp-account-card.personal-using > *,
+    .ghcp-account-card.current:not(.api-using) > * {
       position: relative;
       z-index: 1;
     }
 
-    .ghcp-account-card.personal-using .personal-current-tag {
+    .ghcp-account-card.personal-using .personal-current-tag,
+    .ghcp-account-card.current:not(.api-using) .current-tag:not([data-runtime-api-using]) {
       color: #2a1803;
       border-color: rgba(245, 208, 111, .58);
       background: linear-gradient(135deg, #fff4b8, #f5d06f 45%, #d4af37);
@@ -2772,7 +2776,7 @@ export function renderAdminHtml() {
       animation: pro-card-crown-line 4.2s ease-in-out infinite;
     }
 
-    .ghcp-account-card.plan-pro:not(.api-using):not(.personal-using)::after {
+    .ghcp-account-card.plan-pro:not(.api-using):not(.personal-using):not(.current)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -2819,7 +2823,7 @@ export function renderAdminHtml() {
       animation: plus-card-silver-line 5.2s ease-in-out infinite;
     }
 
-    .ghcp-account-card.plan-plus:not(.api-using):not(.personal-using)::after {
+    .ghcp-account-card.plan-plus:not(.api-using):not(.personal-using):not(.current)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -2863,7 +2867,7 @@ export function renderAdminHtml() {
       opacity: .86;
     }
 
-    .ghcp-account-card.plan-team:not(.api-using):not(.personal-using)::after {
+    .ghcp-account-card.plan-team:not(.api-using):not(.personal-using):not(.current)::after {
       content: '';
       position: absolute;
       z-index: 0;
@@ -3229,6 +3233,8 @@ export function renderAdminHtml() {
       .ghcp-account-card.api-using::after,
       .ghcp-account-card.personal-using,
       .ghcp-account-card.personal-using::after,
+      .ghcp-account-card.current:not(.api-using),
+      .ghcp-account-card.current:not(.api-using)::after,
       .tier-badge.pro,
       .tier-badge.pro::after,
       .ghcp-account-card.plan-pro::before,
@@ -4841,8 +4847,15 @@ function applyApiRuntimeState(runtime) {
     card.classList.toggle('api-using', isUsing);
     card.classList.toggle('personal-using', isCurrent && !isUsing);
     const existing = card.querySelector('[data-runtime-api-using]');
-    const personalBadge = card.querySelector('[data-personal-current]');
-    const currentBadge = card.querySelector('[data-account-current]');
+    let personalBadge = card.querySelector('[data-personal-current]');
+    let currentBadge = card.querySelector('[data-account-current]');
+    if (!currentBadge) {
+      currentBadge = Array.from(card.querySelectorAll('.current-tag')).find(function(item) {
+        return !item.hasAttribute('data-runtime-api-using') &&
+          !item.hasAttribute('data-personal-current') &&
+          String(item.textContent || '').trim() === '当前';
+      }) || null;
+    }
     if (isUsing && !existing) {
       const badges = card.querySelector('.badges');
       if (badges) badges.insertAdjacentHTML('afterbegin', '<span class="current-tag" data-runtime-api-using>' + visualLabel + '</span>');
@@ -4855,6 +4868,11 @@ function applyApiRuntimeState(runtime) {
       personalBadge.outerHTML = '<span class="current-tag" data-account-current>当前</span>';
     } else if (!isUsing && isCurrent && currentBadge) {
       currentBadge.outerHTML = '<span class="current-tag personal-current-tag" data-personal-current>个人使用中</span>';
+    } else if (!isUsing && isCurrent && !personalBadge) {
+      const badges = card.querySelector('.badges');
+      if (badges) badges.insertAdjacentHTML('afterbegin', '<span class="current-tag personal-current-tag" data-personal-current>个人使用中</span>');
+    } else if (!isCurrent && personalBadge) {
+      personalBadge.remove();
     }
   });
 }
