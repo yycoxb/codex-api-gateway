@@ -1706,6 +1706,16 @@ async function finishCodexAppMutation(result, payload) {
   }
 
   if (shouldRestartCodexApp) {
+    if (shouldRepairSessions) {
+      try {
+        result.sessionVisibilityRepairImmediate = await repairSessionVisibility({ rewriteRollouts });
+      } catch (err) {
+        result.sessionVisibilityRepairImmediate = {
+          ok: false,
+          error: String(err?.message || err),
+        };
+      }
+    }
     const restartOptions = {
       delayMs: Number(payload.restartDelayMs || 900),
       closeTimeoutMs: Number(payload.closeTimeoutMs || 20000),
@@ -1730,13 +1740,14 @@ async function handleCodexAppState(req, res) {
   return jsonResponse(res, 200, await getCodexAppState());
 }
 
-async function handleCodexAppSwitch(req, res) {
+async function handleCodexAppSwitch(req, res, config) {
   const body = await readBody(req);
   const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
   if (!payload.accountId) return jsonResponse(res, 400, { error: 'missing accountId' });
   const result = await switchCodexAppAccount(payload.accountId, {
     makeGatewayCurrent: payload.makeGatewayCurrent !== false,
     backup: payload.backup !== false,
+    apiServiceBaseUrl: `http://${config.host}:${config.port}/v1`,
   });
   await finishCodexAppMutation(result, payload);
   return jsonResponse(res, 200, result);
@@ -1844,7 +1855,7 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear') return await handleClearLocalAccessStats(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear-account-failure') return await handleClearLocalAccessAccountFailure(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/codex-app/state') return await handleCodexAppState(req, res);
-      if (req.method === 'POST' && u.pathname === '/_admin/codex-app/switch') return await handleCodexAppSwitch(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/codex-app/switch') return await handleCodexAppSwitch(req, res, config);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/api-service') return await handleCodexAppApiService(req, res, config);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/repair-sessions') return await handleCodexRepairSessions(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/quick-config') return await handleCodexQuickConfig(req, res);

@@ -240,12 +240,18 @@ function buildApiServiceProviderSection(baseUrl) {
   ].join('\n');
 }
 
-async function writeOpenAiBuiltinConfig() {
+function hasProviderSection(toml, providerId) {
+  return providerSectionRegExp(providerId).test(String(toml || ''));
+}
+
+async function writeOpenAiBuiltinConfig({ apiServiceBaseUrl = null } = {}) {
   const { configPath } = paths();
   let content = await readTextIfExists(configPath);
   content = removeTopLevelKey(content, 'model_provider');
   content = removeTopLevelKey(content, 'openai_base_url');
-  content = removeProviderSection(content, API_SERVICE_PROVIDER_ID);
+  if (apiServiceBaseUrl && !hasProviderSection(content, API_SERVICE_PROVIDER_ID)) {
+    content = `${content.trimEnd()}\n\n${buildApiServiceProviderSection(apiServiceBaseUrl)}`.trimStart();
+  }
   await writeTextAtomic(configPath, content.trimEnd() ? `${content.trimEnd()}\n` : '');
 }
 
@@ -343,7 +349,7 @@ export async function switchCodexAppAccount(accountId, options = {}) {
   const authValue = buildAuthFileValue(account);
   const authBackupPath = options.backup === false ? null : await backupFile(p.authPath);
   await writeTextAtomic(p.authPath, JSON.stringify(authValue, null, 2));
-  await writeOpenAiBuiltinConfig();
+  await writeOpenAiBuiltinConfig({ apiServiceBaseUrl: options.apiServiceBaseUrl || null });
   await writeTextAtomic(p.projectionPath, JSON.stringify(buildProjection(account), null, 2));
   if (options.makeGatewayCurrent !== false) await setCurrentAccount(account.id);
   return {
