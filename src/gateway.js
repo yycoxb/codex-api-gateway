@@ -1789,6 +1789,77 @@ async function handleCodexAppApiService(req, res, config) {
   return jsonResponse(res, 200, result);
 }
 
+function normalizeRemoteGatewayBaseUrl(value) {
+  const raw = String(value || '').trim().replace(/\/+$/, '');
+  if (!raw) throw new Error('missing remote API base URL');
+  const url = new URL(raw);
+  if (!['http:', 'https:'].includes(url.protocol)) throw new Error('remote API base URL must start with http:// or https://');
+  if (url.pathname === '' || url.pathname === '/') url.pathname = '/v1';
+  if (!url.pathname.endsWith('/v1')) {
+    url.pathname = `${url.pathname.replace(/\/+$/, '')}/v1`;
+  }
+  url.search = '';
+  url.hash = '';
+  return url.toString().replace(/\/+$/, '');
+}
+
+async function testRemoteGatewayApi({ baseUrl, apiKey }) {
+  const normalizedBaseUrl = normalizeRemoteGatewayBaseUrl(baseUrl);
+  const key = String(apiKey || '').trim();
+  if (!key) throw new Error('missing remote Gateway API Key');
+  const startedAt = Date.now();
+  const response = await fetch(`${normalizedBaseUrl}/models`, {
+    method: 'GET',
+    headers: {
+      authorization: `Bearer ${key}`,
+      accept: 'application/json',
+    },
+  });
+  const text = await response.text();
+  let parsed = null;
+  try { parsed = text ? JSON.parse(text) : null; } catch {}
+  return {
+    ok: response.ok,
+    baseUrl: normalizedBaseUrl,
+    statusCode: response.status,
+    latencyMs: Date.now() - startedAt,
+    modelCount: Array.isArray(parsed?.data) ? parsed.data.length : (Array.isArray(parsed?.models) ? parsed.models.length : null),
+    error: response.ok ? null : String(parsed?.error || parsed?.message || text || response.statusText || 'remote Gateway request failed').slice(0, 240),
+  };
+}
+
+async function handleRemoteGatewayTest(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  return jsonResponse(res, 200, await testRemoteGatewayApi({
+    baseUrl: payload.baseUrl,
+    apiKey: payload.apiKey,
+  }));
+}
+
+async function handleCodexAppRemoteApiService(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  const test = await testRemoteGatewayApi({
+    baseUrl: payload.baseUrl,
+    apiKey: payload.apiKey,
+  });
+  if (!test.ok) return jsonResponse(res, 400, test);
+  const result = await activateCodexApiService({
+    apiKey: String(payload.apiKey || '').trim(),
+    baseUrl: test.baseUrl,
+    backup: payload.backup !== false,
+  });
+  result.remoteGateway = {
+    baseUrl: test.baseUrl,
+    statusCode: test.statusCode,
+    latencyMs: test.latencyMs,
+    modelCount: test.modelCount,
+  };
+  await finishCodexAppMutation(result, payload);
+  return jsonResponse(res, 200, result);
+}
+
 async function handleCodexQuickConfig(req, res) {
   const body = await readBody(req);
   const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
@@ -1870,6 +1941,8 @@ export function createServer(config) {
       if (req.method === 'GET' && u.pathname === '/_admin/codex-app/state') return await handleCodexAppState(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/switch') return await handleCodexAppSwitch(req, res, config);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/api-service') return await handleCodexAppApiService(req, res, config);
+      if (req.method === 'POST' && u.pathname === '/_admin/codex-app/remote-api-service/test') return await handleRemoteGatewayTest(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/codex-app/remote-api-service') return await handleCodexAppRemoteApiService(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/repair-sessions') return await handleCodexRepairSessions(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/quick-config') return await handleCodexQuickConfig(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/shutdown') return handleShutdown(req, res);

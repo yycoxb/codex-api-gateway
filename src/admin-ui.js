@@ -359,6 +359,12 @@ export function renderAdminHtml() {
       font-weight: 800;
     }
 
+    .status-pill.bad {
+      color: #fecaca;
+      border-color: rgba(248, 113, 113, .42);
+      background: rgba(127, 29, 29, .32);
+    }
+
     .wakeup-form {
       display: grid;
       grid-template-columns: 145px minmax(180px, 1fr);
@@ -3414,6 +3420,27 @@ export function renderAdminHtml() {
           </div>
         </section>
 
+        <section class="panel-card codex-app-config">
+          <div class="card-head">
+            <div>
+              <h2>使用远程 Gateway API</h2>
+              <p class="panel-subtitle">把本机 Codex App 指向另一台电脑的 Gateway，例如 mafei 的 Tailscale 地址。</p>
+            </div>
+            <span class="status-pill" id="remoteGatewayStatus">未测试</span>
+          </div>
+          <label class="form-label" for="remoteGatewayBaseUrl">远程 Base URL</label>
+          <input class="input" id="remoteGatewayBaseUrl" placeholder="http://100.81.61.119:18080/v1" />
+          <label class="form-label" for="remoteGatewayApiKey" style="margin-top:10px">远程 API Key</label>
+          <input class="input" id="remoteGatewayApiKey" type="password" placeholder="从远程 Gateway 管理页复制 agt_codex_xxx" autocomplete="off" />
+          <div class="codex-app-note" style="margin-top:12px">
+            这里不会保存远程 API Key 到本 Gateway；点击“写入本机 Codex App”会备份并覆盖本机 ~/.codex/auth.json 和 config.toml，让本机 Codex App 使用远程 Gateway。
+          </div>
+          <div class="inline-actions" style="margin-top:12px">
+            <button id="testRemoteGatewayBtn">测试远程连接</button>
+            <button class="primary" id="activateRemoteGatewayBtn">写入本机 Codex App</button>
+          </div>
+        </section>
+
         <section class="panel-card codex-app-accounts">
           <div class="card-head">
             <div>
@@ -3808,6 +3835,7 @@ export function renderAdminHtml() {
 
 <script>
 const ACCOUNT_ORDER_STORAGE_KEY = 'codex-api-gateway.account-order.v1';
+const REMOTE_GATEWAY_BASE_URL_STORAGE_KEY = 'codex-api-gateway.remote-base-url.v1';
 const RUNTIME_ACTIVITY_HOLD_MS = 12000;
 const API_EQUIVALENT_PRICING = {
   model: 'GPT-5.5',
@@ -3830,6 +3858,7 @@ const state = {
   apiCustomRules: {},
   apiHealthBusy: false,
   apiHealthResult: null,
+  remoteGatewayTest: null,
   selectionInitialized: false,
   apiSelectionInitialized: false,
   lastWakeupResult: null,
@@ -3932,6 +3961,23 @@ function loadAccountOrder() {
 function saveAccountOrder() {
   try {
     localStorage.setItem(ACCOUNT_ORDER_STORAGE_KEY, JSON.stringify(state.accountOrder || []));
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function loadRemoteGatewayBaseUrl() {
+  try {
+    return localStorage.getItem(REMOTE_GATEWAY_BASE_URL_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function saveRemoteGatewayBaseUrl(value) {
+  try {
+    const text = String(value || '').trim();
+    if (text) localStorage.setItem(REMOTE_GATEWAY_BASE_URL_STORAGE_KEY, text);
   } catch {
     // ignore storage failures
   }
@@ -5721,6 +5767,14 @@ function renderCodexAppState() {
   if ($('codexAppCurrentText')) {
     $('codexAppCurrentText').textContent = apiServiceActive ? 'API \u670d\u52a1' : (appAuth?.email ? maskEmail(appAuth.email) : '\u672a\u68c0\u6d4b\u5230\u767b\u5f55');
   }
+  if ($('remoteGatewayBaseUrl') && !$('remoteGatewayBaseUrl').value) {
+    $('remoteGatewayBaseUrl').value = loadRemoteGatewayBaseUrl();
+  }
+  if ($('remoteGatewayStatus') && !state.remoteGatewayTest) {
+    const baseUrl = app.apiService && app.apiService.baseUrl;
+    const remoteActive = apiServiceActive && baseUrl && !/127\.0\.0\.1|localhost|0\.0\.0\.0/i.test(baseUrl);
+    $('remoteGatewayStatus').textContent = remoteActive ? '正在使用远程' : '未测试';
+  }
   if ($('quickContextWindow1m')) $('quickContextWindow1m').checked = !!app.quickConfig?.contextWindow1m;
   if ($('quickAutoCompactLimit')) $('quickAutoCompactLimit').value = String(app.quickConfig?.autoCompactTokenLimit || 900000);
 }
@@ -5989,6 +6043,89 @@ async function activateApiServiceForCodexApp() {
   await loadState();
   setActiveTab('overview');
   toast(data.ok ? '\u5df2\u5199\u5165 API \u670d\u52a1\u6a21\u5f0f\uff0c\u5df2\u5b89\u6392\u91cd\u542f Codex App' : '\u5199\u5165\u5931\u8d25');
+}
+
+function remoteGatewayForm() {
+  const baseUrl = $('remoteGatewayBaseUrl') ? $('remoteGatewayBaseUrl').value.trim() : '';
+  const apiKey = $('remoteGatewayApiKey') ? $('remoteGatewayApiKey').value.trim() : '';
+  if (!baseUrl) throw new Error('请先填写远程 Gateway Base URL');
+  if (!apiKey) throw new Error('请先填写远程 Gateway API Key');
+  return { baseUrl, apiKey };
+}
+
+function setRemoteGatewayStatus(text, ok) {
+  state.remoteGatewayTest = text ? { text, ok } : null;
+  if ($('remoteGatewayStatus')) {
+    $('remoteGatewayStatus').textContent = text || '未测试';
+    $('remoteGatewayStatus').classList.toggle('bad', ok === false);
+  }
+}
+
+async function testRemoteGateway() {
+  let payload;
+  try {
+    payload = remoteGatewayForm();
+  } catch (err) {
+    toast(String(err.message || err));
+    return;
+  }
+  saveRemoteGatewayBaseUrl(payload.baseUrl);
+  setRemoteGatewayStatus('测试中...', null);
+  setOutput('正在测试远程 Gateway...');
+  const res = await fetch('/_admin/codex-app/remote-api-service/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (data.ok) {
+    setRemoteGatewayStatus('可用 · ' + data.latencyMs + 'ms', true);
+    toast('远程 Gateway 可用');
+  } else {
+    setRemoteGatewayStatus('不可用', false);
+    toast(data.error || '远程 Gateway 测试失败');
+  }
+  return data;
+}
+
+async function activateRemoteGatewayForCodexApp() {
+  let payload;
+  try {
+    payload = remoteGatewayForm();
+  } catch (err) {
+    toast(String(err.message || err));
+    return;
+  }
+  const confirmMessage = '确定让本机 Codex App 使用远程 Gateway 吗？'
+    + String.fromCharCode(10, 10)
+    + 'Base URL: ' + payload.baseUrl
+    + String.fromCharCode(10, 10)
+    + '会先测试远程 /v1/models；成功后备份并覆盖本机 ~/.codex/auth.json 和 config.toml，然后自动重启 Codex App。';
+  if (!confirm(confirmMessage)) return;
+  saveRemoteGatewayBaseUrl(payload.baseUrl);
+  setRemoteGatewayStatus('写入中...', null);
+  setOutput('正在写入远程 Gateway API 服务配置...');
+  const res = await fetch('/_admin/codex-app/remote-api-service', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...payload,
+      backup: true,
+      restartCodexApp: true
+    })
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (data.ok) {
+    setRemoteGatewayStatus('已写入远程', true);
+    toast('已写入远程 Gateway，已安排重启 Codex App');
+    await loadState();
+    setActiveTab('codexapp');
+  } else {
+    setRemoteGatewayStatus('写入失败', false);
+    toast(data.error || '写入远程 Gateway 失败');
+  }
 }
 
 async function rotateKey() {
@@ -6613,6 +6750,8 @@ $('saveQuotaAutoRefreshBtn').onclick = function() { saveQuotaAutoRefresh(); };
 $('runQuotaAutoRefreshNowBtn').onclick = runQuotaAutoRefreshNow;
 $('reloadCodexAppBtn').onclick = function() { reloadCodexAppState().then(function() { toast('已重新检测 Codex App'); }); };
 $('saveQuickConfigBtn').onclick = saveQuickConfig;
+$('testRemoteGatewayBtn').onclick = function() { testRemoteGateway().catch(function(err) { setRemoteGatewayStatus('测试失败', false); setOutput(String(err)); }); };
+$('activateRemoteGatewayBtn').onclick = function() { activateRemoteGatewayForCodexApp().catch(function(err) { setRemoteGatewayStatus('写入失败', false); setOutput(String(err)); }); };
 $('runWakeupBtn').onclick = function() { runWakeup(); };
 $('refreshSelectedQuotaBtn').onclick = function() { refreshQuota(); };
 $('loadWakeupHistoryBtn').onclick = loadWakeupHistory;
