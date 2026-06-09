@@ -2364,6 +2364,28 @@ export function renderAdminHtml() {
       font: 12px var(--font-mono);
     }
 
+    .converter-box {
+      margin-top: 16px;
+      padding: 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: rgba(255, 255, 255, .45);
+    }
+
+    .converter-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-top: 10px;
+    }
+
+    .converter-warning {
+      margin-top: 10px;
+      color: var(--warning);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+
     pre {
       min-height: 90px;
       max-height: 300px;
@@ -2532,6 +2554,11 @@ export function renderAdminHtml() {
       background: rgba(10, 9, 7, .72);
       color: var(--text-primary);
       box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03);
+    }
+
+    .converter-box {
+      border-color: rgba(245, 208, 111, .22);
+      background: rgba(17, 14, 9, .62);
     }
 
     .input::placeholder,
@@ -3205,6 +3232,10 @@ export function renderAdminHtml() {
       .daily-schedule-row {
         grid-template-columns: 1fr 1fr;
       }
+
+      .converter-grid {
+        grid-template-columns: 1fr;
+      }
     }
 
     @media (max-width: 680px) {
@@ -3537,6 +3568,39 @@ export function renderAdminHtml() {
           <textarea id="authJsonInput" class="import-textarea" placeholder="把账号 JSON 粘贴到这里"></textarea>
           <div class="inline-actions">
             <button class="primary" id="importJsonBtn">导入粘贴内容</button>
+          </div>
+          <div class="converter-box">
+            <h3 style="margin:0 0 6px;font-size:15px;">本地格式转换</h3>
+            <p class="section-desc">内置 GPTSession2CPAandSub2API 风格转换：缺少真实 id_token 时会合成 Codex 可解析的占位 JWT。转换只在本机 Gateway 内完成，不保存历史。</p>
+            <div class="converter-grid">
+              <div>
+                <label class="form-label" for="convertInputFormatSelect">输入格式</label>
+                <select class="input" id="convertInputFormatSelect">
+                  <option value="auto">自动识别（推荐）</option>
+                  <option value="gateway">gateway</option>
+                  <option value="cockpit-tools">cockpit-tools</option>
+                  <option value="sub2api">sub2api</option>
+                  <option value="cpa">cpa / token storage</option>
+                  <option value="codex-session">ChatGPT/Codex session JSON</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label" for="convertOutputFormatSelect">输出格式</label>
+                <select class="input" id="convertOutputFormatSelect">
+                  <option value="gateway">gateway（本项目）</option>
+                  <option value="cockpit-tools">cockpit-tools</option>
+                  <option value="sub2api">sub2api</option>
+                  <option value="cpa">cpa / token storage</option>
+                </select>
+              </div>
+            </div>
+            <textarea id="convertOutput" class="import-textarea" readonly placeholder="转换后的 JSON 会显示在这里"></textarea>
+            <div class="converter-warning">注意：转换结果包含完整登录凭证/token。只在本地复制使用，不要提交到 GitHub 或发送给他人。</div>
+            <div class="inline-actions">
+              <button id="convertAccountsBtn">转换</button>
+              <button id="copyConvertOutputBtn">复制结果</button>
+              <button class="primary" id="convertAndImportBtn">转换并导入</button>
+            </div>
           </div>
         </section>
 
@@ -6146,6 +6210,68 @@ async function importJson() {
   await loadState();
 }
 
+function selectedConvertInputFormat() {
+  const select = $('convertInputFormatSelect');
+  return select ? select.value : 'auto';
+}
+
+function selectedConvertOutputFormat() {
+  const select = $('convertOutputFormatSelect');
+  return select ? select.value : 'gateway';
+}
+
+function converterSourceJson() {
+  return $('authJsonInput') ? $('authJsonInput').value.trim() : '';
+}
+
+async function convertAccountsJson() {
+  const jsonContent = converterSourceJson();
+  if (!jsonContent) return toast('请先粘贴要转换的 JSON');
+  setOutput('正在本地转换账号格式...');
+  const res = await fetch('/_admin/convert-accounts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jsonContent: jsonContent,
+      inputFormat: selectedConvertInputFormat(),
+      outputFormat: selectedConvertOutputFormat()
+    })
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (data.ok && $('convertOutput')) {
+    $('convertOutput').value = JSON.stringify(data.content, null, 2);
+    toast('转换完成：' + data.inputFormat + ' → ' + data.outputFormat);
+  }
+  return data;
+}
+
+async function copyConvertOutput() {
+  const text = $('convertOutput') ? $('convertOutput').value.trim() : '';
+  if (!text) return toast('还没有转换结果');
+  await copyText(text);
+}
+
+async function convertAndImportAccounts() {
+  const data = await convertAccountsJson();
+  if (!data || !data.ok) return;
+  const jsonContent = $('convertOutput') ? $('convertOutput').value.trim() : '';
+  if (!jsonContent) return toast('转换结果为空');
+  setOutput('正在导入转换结果...');
+  const res = await fetch('/_admin/import-json', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ jsonContent: jsonContent, format: selectedConvertOutputFormat() })
+  });
+  const imported = await res.json();
+  setOutput(imported);
+  if (imported.ok) {
+    toast('转换并导入完成');
+    $('authJsonInput').value = '';
+  }
+  await loadState();
+}
+
 async function useAccount(accountId) {
   const res = await fetch('/_admin/use-account', {
     method: 'POST',
@@ -6479,6 +6605,9 @@ $('shutdownBtn').onclick = shutdownGateway;
 $('importCurrentBtn').onclick = importCurrent;
 $('importJsonBtn').onclick = importJson;
 $('importFormatSelect').onchange = syncImportFormatHelp;
+$('convertAccountsBtn').onclick = function() { convertAccountsJson().catch(function(err) { setOutput(String(err)); }); };
+$('copyConvertOutputBtn').onclick = function() { copyConvertOutput().catch(function(err) { setOutput(String(err)); }); };
+$('convertAndImportBtn').onclick = function() { convertAndImportAccounts().catch(function(err) { setOutput(String(err)); }); };
 $('overviewRefreshAllBtn').onclick = function() { refreshQuota(allAccountIds()); };
 $('saveQuotaAutoRefreshBtn').onclick = function() { saveQuotaAutoRefresh(); };
 $('runQuotaAutoRefreshNowBtn').onclick = runQuotaAutoRefreshNow;

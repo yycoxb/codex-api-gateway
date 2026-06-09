@@ -309,6 +309,12 @@ function assertOAuthExportable(accounts, format) {
   }
 }
 
+function hasSyntheticIdToken(account) {
+  return account?.token_source_mode === 'synthetic-id-token' ||
+    account?.tokenSourceMode === 'synthetic-id-token' ||
+    (Array.isArray(account?.tags) && account.tags.includes('synthetic-id-token'));
+}
+
 function buildSub2apiCredentials(account) {
   const credentials = {
     access_token: account.tokens.access_token,
@@ -317,6 +323,7 @@ function buildSub2apiCredentials(account) {
   if (expiresAt) credentials.expires_at = expiresAt;
   if (account.tokens.refresh_token?.trim()) credentials.refresh_token = account.tokens.refresh_token.trim();
   if (account.tokens.id_token?.trim()) credentials.id_token = account.tokens.id_token.trim();
+  if (hasSyntheticIdToken(account)) credentials.id_token_synthetic = true;
   if (account.email?.trim()) credentials.email = account.email.trim();
 
   const accountId = resolveExportAccountId(account);
@@ -346,6 +353,7 @@ function toSub2apiAccount(account) {
 function toCpaTokenStorage(account) {
   return {
     id_token: account.tokens?.id_token || '',
+    id_token_synthetic: hasSyntheticIdToken(account) || undefined,
     access_token: account.tokens?.access_token || '',
     refresh_token: account.tokens?.refresh_token?.trim() || '',
     account_id: resolveExportAccountId(account) || '',
@@ -997,13 +1005,13 @@ function normalizeSub2apiImportItem(item) {
     subscription_active_until: credentials.subscription_expires_at || item.subscription_active_until || undefined,
     token_updated_at: credentials.last_refresh || item.last_refresh || undefined,
     auth_mode: 'oauth',
-    token_source_mode: credentials.id_token ? 'managed' : 'synthetic-id-token',
+    token_source_mode: credentials.id_token && !credentials.id_token_synthetic ? 'managed' : 'synthetic-id-token',
     tokens: {
       id_token: idToken,
       access_token: accessToken,
       refresh_token: credentials.refresh_token || null,
     },
-    tags: credentials.id_token ? undefined : ['synthetic-id-token'],
+    tags: credentials.id_token && !credentials.id_token_synthetic ? undefined : ['synthetic-id-token'],
   });
 }
 
@@ -1030,13 +1038,13 @@ function normalizeCpaImportItem(item) {
     plan_type: planType || undefined,
     token_updated_at: item.last_refresh || undefined,
     auth_mode: 'oauth',
-    token_source_mode: item.id_token ? 'managed' : 'synthetic-id-token',
+    token_source_mode: item.id_token && !item.id_token_synthetic ? 'managed' : 'synthetic-id-token',
     tokens: {
       id_token: idToken,
       access_token: accessToken,
       refresh_token: item.refresh_token || null,
     },
-    tags: item.id_token ? undefined : ['synthetic-id-token'],
+    tags: item.id_token && !item.id_token_synthetic ? undefined : ['synthetic-id-token'],
   });
 }
 
@@ -1217,6 +1225,39 @@ export async function importFromJsonContent(jsonContent, format = 'auto') {
   const result = await upsertAccounts(accounts, accounts[accounts.length - 1]?.id || null);
   result.importFormat = importFormat;
   return result;
+}
+
+export async function convertAccountsJsonContent(jsonContent, inputFormat = 'auto', outputFormat = 'gateway') {
+  let parsed;
+  try {
+    parsed = typeof jsonContent === 'string' ? JSON.parse(jsonContent) : jsonContent;
+  } catch (err) {
+    throw new Error(`JSON 解析失败: ${err.message}`);
+  }
+  const requestedInputFormat = normalizeImportFormat(inputFormat);
+  const importFormat = detectImportFormat(parsed, requestedInputFormat);
+  const exportFormat = normalizeExportFormat(outputFormat);
+  const items = rawImportItems(parsed);
+  if (!items.length) throw new Error('没有找到可转换的账号');
+
+  const accounts = items.map((item, index) => {
+    try {
+      return accountFromAuthObject(normalizeImportItem(item, importFormat), `converted-json:${importFormat}`);
+    } catch (err) {
+      throw new Error(`第 ${index + 1} 个账号转换失败: ${err.message}`);
+    }
+  }).map(accountExportObject);
+
+  assertOAuthExportable(accounts, exportFormat);
+  return {
+    ok: true,
+    inputFormat: importFormat,
+    outputFormat: exportFormat,
+    count: accounts.length,
+    filename: exportFileName(accounts.length, exportFormat),
+    content: buildExportContent(accounts, exportFormat),
+    documents: buildExportDocuments(accounts, exportFormat),
+  };
 }
 
 export async function exportAccounts(accountIds = []) {

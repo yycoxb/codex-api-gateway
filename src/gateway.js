@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { ACCOUNT_PATH, CORS_ALLOW_HEADERS, DEFAULT_CODEX_ORIGINATOR, DEFAULT_CODEX_USER_AGENT, DEFAULT_MODELS, OPENAI_API_BASE, UPSTREAM_BASE } from './constants.js';
 import {
   codexHome,
+  convertAccountsJsonContent,
   deleteAccount,
   exportAccountsFormatted,
   importFromCodexAuth,
@@ -1448,6 +1449,17 @@ async function handleImportJson(req, res) {
   });
 }
 
+async function handleConvertAccounts(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  const result = await convertAccountsJsonContent(
+    payload.jsonContent || payload.content || '',
+    payload.inputFormat || payload.format || 'auto',
+    payload.outputFormat || payload.exportFormat || 'gateway'
+  );
+  return jsonResponse(res, 200, result);
+}
+
 async function handleExportAccounts(req, res) {
   const body = await readBody(req);
   const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
@@ -1830,6 +1842,7 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/rotate-key') return await handleRotateKey(req, res, config);
       if (req.method === 'POST' && u.pathname === '/_admin/import-current') return await handleImportCurrent(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/import-json') return await handleImportJson(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/convert-accounts') return await handleConvertAccounts(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/export-accounts') return await handleExportAccounts(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex/oauth/start') return await handleCodexOAuthStart(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/codex/oauth/status') return await handleCodexOAuthStatus(req, res, u);
