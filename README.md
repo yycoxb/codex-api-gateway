@@ -45,6 +45,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1 -IncludeStopShortcut
 ```
 
+如果这台电脑要作为远程 Gateway 给另一台电脑访问，请创建远程访问版快捷方式。它会用 `0.0.0.0:18080` 启动：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1 -RemoteAccess
+```
+
 ## 下载与启动
 
 ### 方式一：Git 克隆
@@ -100,6 +106,12 @@ npm start
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
+```
+
+如果新电脑需要通过 Tailscale 给其他电脑提供 Gateway API，创建远程访问版快捷方式：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1 -RemoteAccess
 ```
 
 然后打开：
