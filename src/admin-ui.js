@@ -3352,6 +3352,27 @@ export function renderAdminHtml() {
                 <option value="passthrough">跟随客户端</option>
               </select>
             </div>
+            <div class="config-row">
+              <div class="label">Codex 使用</div>
+              <select class="input" id="apiServiceTargetMode">
+                <option value="local">本机 API 服务</option>
+                <option value="remote">另一台电脑 API</option>
+              </select>
+            </div>
+            <div id="apiRemoteGatewayBox" style="display:none">
+              <div class="config-row">
+                <div class="label">远程地址</div>
+                <input class="input" id="apiRemoteGatewayBaseUrl" placeholder="http://100.81.61.119:18080/v1" />
+              </div>
+              <div class="config-row">
+                <div class="label">远程密钥</div>
+                <input class="input" id="apiRemoteGatewayApiKey" type="password" placeholder="agt_codex_xxx" autocomplete="off" />
+              </div>
+              <div class="inline-actions" style="margin-top:8px">
+                <button id="apiTestRemoteGatewayBtn">测试远程</button>
+                <span class="small-line" id="apiRemoteGatewayStatus">未测试</span>
+              </div>
+            </div>
           </div>
 
           <div class="local-note" id="localAccessHint">点击“添加账号”维护 API 服务集合；播放按钮才会切到 API 服务模式。</div>
@@ -3980,6 +4001,28 @@ function saveRemoteGatewayBaseUrl(value) {
     if (text) localStorage.setItem(REMOTE_GATEWAY_BASE_URL_STORAGE_KEY, text);
   } catch {
     // ignore storage failures
+  }
+}
+
+function selectedApiServiceTargetMode() {
+  const select = $('apiServiceTargetMode');
+  return select && select.value === 'remote' ? 'remote' : 'local';
+}
+
+function syncApiServiceTargetMode() {
+  const remote = selectedApiServiceTargetMode() === 'remote';
+  if ($('apiRemoteGatewayBox')) $('apiRemoteGatewayBox').style.display = remote ? 'block' : 'none';
+  const savedBaseUrl = loadRemoteGatewayBaseUrl();
+  if (remote && $('apiRemoteGatewayBaseUrl') && !$('apiRemoteGatewayBaseUrl').value) {
+    $('apiRemoteGatewayBaseUrl').value = savedBaseUrl;
+  }
+  if (remote && $('remoteGatewayBaseUrl') && !$('remoteGatewayBaseUrl').value) {
+    $('remoteGatewayBaseUrl').value = savedBaseUrl;
+  }
+  if ($('localAccessHint')) {
+    $('localAccessHint').textContent = remote
+      ? '播放按钮会把本机 Codex App 指向另一台电脑的 Gateway；本机账号池不会参与请求。'
+      : '点击“添加账号”维护本机 API 服务集合；播放按钮会切到本机 API 服务模式。';
   }
 }
 
@@ -5770,6 +5813,9 @@ function renderCodexAppState() {
   if ($('remoteGatewayBaseUrl') && !$('remoteGatewayBaseUrl').value) {
     $('remoteGatewayBaseUrl').value = loadRemoteGatewayBaseUrl();
   }
+  if ($('apiRemoteGatewayBaseUrl') && !$('apiRemoteGatewayBaseUrl').value) {
+    $('apiRemoteGatewayBaseUrl').value = loadRemoteGatewayBaseUrl();
+  }
   if ($('remoteGatewayStatus') && !state.remoteGatewayTest) {
     const baseUrl = app.apiService && app.apiService.baseUrl;
     const remoteActive = apiServiceActive && baseUrl && !/127\.0\.0\.1|localhost|0\.0\.0\.0/i.test(baseUrl);
@@ -5777,6 +5823,7 @@ function renderCodexAppState() {
   }
   if ($('quickContextWindow1m')) $('quickContextWindow1m').checked = !!app.quickConfig?.contextWindow1m;
   if ($('quickAutoCompactLimit')) $('quickAutoCompactLimit').value = String(app.quickConfig?.autoCompactTokenLimit || 900000);
+  syncApiServiceTargetMode();
 }
 
 function renderCodexAppAccounts() {
@@ -6013,6 +6060,9 @@ async function testChat() {
 
 
 async function activateApiServiceForCodexApp() {
+  if (selectedApiServiceTargetMode() === 'remote') {
+    return await activateRemoteGatewayForCodexApp('apiCard');
+  }
   const ids = selectedApiAccountIds();
   if (!ids.length) {
     alert('\u8bf7\u5148\u70b9\u51fb API \u670d\u52a1\u5361\u7247\u7684\u201c\u6dfb\u52a0\u8d26\u53f7\u201d\uff0c\u4fdd\u5b58\u81f3\u5c11 1 \u4e2a OAuth \u8d26\u53f7\u5230 API \u670d\u52a1\u96c6\u5408\u3002');
@@ -6045,26 +6095,33 @@ async function activateApiServiceForCodexApp() {
   toast(data.ok ? '\u5df2\u5199\u5165 API \u670d\u52a1\u6a21\u5f0f\uff0c\u5df2\u5b89\u6392\u91cd\u542f Codex App' : '\u5199\u5165\u5931\u8d25');
 }
 
-function remoteGatewayForm() {
-  const baseUrl = $('remoteGatewayBaseUrl') ? $('remoteGatewayBaseUrl').value.trim() : '';
-  const apiKey = $('remoteGatewayApiKey') ? $('remoteGatewayApiKey').value.trim() : '';
+function remoteGatewayForm(source) {
+  const fromApiCard = source === 'apiCard';
+  const baseInput = fromApiCard ? $('apiRemoteGatewayBaseUrl') : $('remoteGatewayBaseUrl');
+  const keyInput = fromApiCard ? $('apiRemoteGatewayApiKey') : $('remoteGatewayApiKey');
+  const baseUrl = baseInput ? baseInput.value.trim() : '';
+  const apiKey = keyInput ? keyInput.value.trim() : '';
   if (!baseUrl) throw new Error('请先填写远程 Gateway Base URL');
   if (!apiKey) throw new Error('请先填写远程 Gateway API Key');
   return { baseUrl, apiKey };
 }
 
-function setRemoteGatewayStatus(text, ok) {
+function setRemoteGatewayStatus(text, ok, source) {
   state.remoteGatewayTest = text ? { text, ok } : null;
   if ($('remoteGatewayStatus')) {
     $('remoteGatewayStatus').textContent = text || '未测试';
     $('remoteGatewayStatus').classList.toggle('bad', ok === false);
   }
+  if ($('apiRemoteGatewayStatus')) {
+    $('apiRemoteGatewayStatus').textContent = text || '未测试';
+    $('apiRemoteGatewayStatus').style.color = ok === false ? '#fecaca' : '';
+  }
 }
 
-async function testRemoteGateway() {
+async function testRemoteGateway(source) {
   let payload;
   try {
-    payload = remoteGatewayForm();
+    payload = remoteGatewayForm(source);
   } catch (err) {
     toast(String(err.message || err));
     return;
@@ -6080,19 +6137,19 @@ async function testRemoteGateway() {
   const data = await res.json();
   setOutput(data);
   if (data.ok) {
-    setRemoteGatewayStatus('可用 · ' + data.latencyMs + 'ms', true);
+    setRemoteGatewayStatus('可用 · ' + data.latencyMs + 'ms', true, source);
     toast('远程 Gateway 可用');
   } else {
-    setRemoteGatewayStatus('不可用', false);
+    setRemoteGatewayStatus('不可用', false, source);
     toast(data.error || '远程 Gateway 测试失败');
   }
   return data;
 }
 
-async function activateRemoteGatewayForCodexApp() {
+async function activateRemoteGatewayForCodexApp(source) {
   let payload;
   try {
-    payload = remoteGatewayForm();
+    payload = remoteGatewayForm(source);
   } catch (err) {
     toast(String(err.message || err));
     return;
@@ -6104,7 +6161,7 @@ async function activateRemoteGatewayForCodexApp() {
     + '会先测试远程 /v1/models；成功后备份并覆盖本机 ~/.codex/auth.json 和 config.toml，然后自动重启 Codex App。';
   if (!confirm(confirmMessage)) return;
   saveRemoteGatewayBaseUrl(payload.baseUrl);
-  setRemoteGatewayStatus('写入中...', null);
+  setRemoteGatewayStatus('写入中...', null, source);
   setOutput('正在写入远程 Gateway API 服务配置...');
   const res = await fetch('/_admin/codex-app/remote-api-service', {
     method: 'POST',
@@ -6118,12 +6175,12 @@ async function activateRemoteGatewayForCodexApp() {
   const data = await res.json();
   setOutput(data);
   if (data.ok) {
-    setRemoteGatewayStatus('已写入远程', true);
+    setRemoteGatewayStatus('已写入远程', true, source);
     toast('已写入远程 Gateway，已安排重启 Codex App');
     await loadState();
     setActiveTab('codexapp');
   } else {
-    setRemoteGatewayStatus('写入失败', false);
+    setRemoteGatewayStatus('写入失败', false, source);
     toast(data.error || '写入远程 Gateway 失败');
   }
 }
@@ -6752,6 +6809,8 @@ $('reloadCodexAppBtn').onclick = function() { reloadCodexAppState().then(functio
 $('saveQuickConfigBtn').onclick = saveQuickConfig;
 $('testRemoteGatewayBtn').onclick = function() { testRemoteGateway().catch(function(err) { setRemoteGatewayStatus('测试失败', false); setOutput(String(err)); }); };
 $('activateRemoteGatewayBtn').onclick = function() { activateRemoteGatewayForCodexApp().catch(function(err) { setRemoteGatewayStatus('写入失败', false); setOutput(String(err)); }); };
+$('apiServiceTargetMode').onchange = syncApiServiceTargetMode;
+$('apiTestRemoteGatewayBtn').onclick = function() { testRemoteGateway('apiCard').catch(function(err) { setRemoteGatewayStatus('测试失败', false, 'apiCard'); setOutput(String(err)); }); };
 $('runWakeupBtn').onclick = function() { runWakeup(); };
 $('refreshSelectedQuotaBtn').onclick = function() { refreshQuota(); };
 $('loadWakeupHistoryBtn').onclick = loadWakeupHistory;
