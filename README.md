@@ -33,6 +33,18 @@
 
 Windows 用户可以直接使用项目里的 `.cmd` 启动脚本。
 
+如果是从 GitHub 克隆到新电脑，可以运行下面命令在当前用户桌面创建快捷方式：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
+```
+
+如果也想创建停止服务的快捷方式：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1 -IncludeStopShortcut
+```
+
 ## 下载与启动
 
 ### 方式一：Git 克隆
@@ -82,6 +94,12 @@ git clone https://github.com/yycoxb/codex-api-gateway.git
 cd codex-api-gateway
 npm install
 npm start
+```
+
+可选：创建桌面快捷方式：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\create-desktop-shortcut.ps1
 ```
 
 然后打开：
