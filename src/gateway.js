@@ -1,6 +1,7 @@
 import http from 'node:http';
 import { execFile } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
@@ -110,6 +111,35 @@ function safeFailureReason(reason, fallback = 'request failed') {
 function safeErrorReason(err, fallback = 'request failed') {
   const code = err?.code || err?.cause?.code || err?.name || '';
   return safeFailureReason(code ? `${fallback} (${code})` : fallback, fallback);
+}
+
+function isTailscaleIpv4Address(address) {
+  const parts = String(address || '').trim().split('.').map((part) => Number(part));
+  return parts.length === 4
+    && parts.every((part) => Number.isInteger(part) && part >= 0 && part <= 255)
+    && parts[0] === 100
+    && parts[1] >= 64
+    && parts[1] <= 127;
+}
+
+function detectTailscaleIpv4() {
+  const interfaces = os.networkInterfaces();
+  for (const entries of Object.values(interfaces)) {
+    for (const entry of entries || []) {
+      if (entry && entry.family === 'IPv4' && !entry.internal && isTailscaleIpv4Address(entry.address)) {
+        return entry.address;
+      }
+    }
+  }
+  return null;
+}
+
+function gatewayNetworkState(config) {
+  return {
+    listenHost: config.host,
+    listenPort: config.port,
+    tailscaleIpv4: detectTailscaleIpv4(),
+  };
 }
 
 function nestedErrorText(err) {
@@ -1395,6 +1425,7 @@ async function handleAdmin(req, res, config) {
     currentAccountId: accountList.currentAccountId,
     models: DEFAULT_MODELS,
     codexApp: await getCodexAppState(),
+    network: gatewayNetworkState(config),
     localAccess: await loadLocalAccessConfig(),
     localAccessRuntime: getLocalAccessRuntimeState(),
     localAccessCallHistory: getLocalAccessCallHistory(),

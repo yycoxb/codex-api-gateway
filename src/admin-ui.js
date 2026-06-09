@@ -1153,6 +1153,89 @@ export function renderAdminHtml() {
       font-weight: 700;
     }
 
+    .overview-content-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
+      gap: 20px;
+      align-items: start;
+    }
+
+    .gateway-access-card {
+      height: auto;
+      min-height: 0;
+      gap: 12px;
+      padding: 18px;
+      border: 1px solid rgba(245, 208, 111, .22);
+      background:
+        radial-gradient(circle at 100% 0%, rgba(245, 208, 111, .13), transparent 38%),
+        linear-gradient(135deg, rgba(23, 20, 13, .88), rgba(11, 10, 7, .76));
+      box-shadow:
+        inset 0 1px 0 rgba(255, 232, 150, .08),
+        0 10px 24px rgba(0, 0, 0, .20);
+      align-self: start;
+      min-width: 0;
+    }
+
+    .gateway-access-card .card-head {
+      margin-bottom: 2px;
+    }
+
+    .gateway-access-footer {
+      margin-top: 0;
+      padding-top: 10px;
+    }
+
+    .gateway-access-row {
+      display: grid;
+      grid-template-columns: 72px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 8px;
+      min-height: 28px;
+    }
+
+    .gateway-access-row b {
+      color: #fff4c7;
+      font-size: 12px;
+      font-weight: 950;
+    }
+
+    .gateway-access-label {
+      color: rgba(245, 208, 111, .68);
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .gateway-access-value {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: #f6ead0;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 850;
+    }
+
+    .gateway-access-note {
+      color: rgba(222, 206, 167, .72);
+      font-size: 12px;
+      line-height: 1.45;
+      font-weight: 750;
+    }
+
+    .gateway-command-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .gateway-command-actions button {
+      min-height: 30px;
+      font-size: 12px;
+      font-weight: 850;
+    }
+
     .add-btn {
       align-self: center;
       min-height: 34px;
@@ -2539,6 +2622,12 @@ export function renderAdminHtml() {
         0 0 14px rgba(17, 48, 22, .35);
     }
 
+    #gatewayListenStatus.remote {
+      color: #064e3b;
+      border-color: rgba(16, 185, 129, .34);
+      background: rgba(16, 185, 129, .12);
+    }
+
     .strip-icon,
     .card-icon {
       background:
@@ -3207,6 +3296,7 @@ export function renderAdminHtml() {
       }
 
       .overview-toolbar,
+      .overview-content-grid,
       .codex-wakeup-hero,
       .wakeup-task-layout,
       .codex-app-layout {
@@ -3255,6 +3345,8 @@ export function renderAdminHtml() {
       .wakeup-form { grid-template-columns: 1fr; }
       .config-row { grid-template-columns: 42px minmax(0, 1fr) auto; }
       .config-row .copy-extra { display: none; }
+      .gateway-access-row { grid-template-columns: 1fr auto; }
+      .gateway-access-label { grid-column: 1 / -1; }
       .codex-wakeup-stats { grid-template-columns: 1fr; }
       .daily-schedule-row { grid-template-columns: 1fr; }
       .stats-grid,
@@ -3326,7 +3418,8 @@ export function renderAdminHtml() {
         </div>
       </div>
 
-      <div class="codex-accounts-grid">
+      <div class="overview-content-grid">
+        <div class="codex-accounts-grid">
         <section class="ghcp-account-card codex-local-access-card" id="localAccessCard">
           <span class="card-light-follow" aria-hidden="true"></span>
           <div class="card-head">
@@ -3368,6 +3461,10 @@ export function renderAdminHtml() {
                 <div class="label">远程密钥</div>
                 <input class="input" id="apiRemoteGatewayApiKey" type="password" placeholder="agt_codex_xxx" autocomplete="off" />
               </div>
+              <label class="switch-row" style="margin-top:8px">
+                <input type="checkbox" id="apiRemoteGatewayRememberKey" />
+                <span>记住远程密钥（仅保存在本机浏览器）</span>
+              </label>
               <div class="inline-actions" style="margin-top:8px">
                 <button id="apiTestRemoteGatewayBtn">测试远程</button>
                 <span class="small-line" id="apiRemoteGatewayStatus">未测试</span>
@@ -3381,7 +3478,7 @@ export function renderAdminHtml() {
           <button class="add-btn" id="addAccountBtn">${icons.folderPlus} 添加账号</button>
 
           <div class="card-footer">
-            <span class="footer-note">仅监听 127.0.0.1</span>
+            <span class="footer-note">API 服务控制</span>
             <div class="card-actions">
               <button class="icon-btn" id="copyChatBtn" title="复制 Chat Completions 地址">${icons.copy}</button>
               <button class="icon-btn" id="testModelsBtn" title="API 服务控制面板">${icons.database}</button>
@@ -3393,7 +3490,45 @@ export function renderAdminHtml() {
           </div>
         </section>
 
-        <div id="accountsList" class="as-contents"></div>        <div id="accountsList" class="as-contents"></div>
+        <div id="accountsList" class="as-contents"></div>
+        </div>
+
+        <section class="ghcp-account-card gateway-access-card" id="gatewayAccessBox">
+          <span class="card-light-follow" aria-hidden="true"></span>
+          <div class="card-head">
+            <div class="card-brand">
+              <div class="card-icon">${icons.copy}</div>
+              <div class="card-title">
+                <h1>远程访问</h1>
+                <p>监听 / Tailscale 地址</p>
+              </div>
+            </div>
+            <span class="status-pill" id="gatewayListenStatus">检测监听</span>
+          </div>
+          <div class="gateway-access-row">
+            <span class="gateway-access-label">当前监听</span>
+            <b id="gatewayListenMode">检测中</b>
+          </div>
+          <div class="gateway-access-row">
+            <span class="gateway-access-label">本机地址</span>
+            <code class="gateway-access-value" id="gatewayLocalApiUrl">http://127.0.0.1:18080/v1</code>
+            <button class="icon-btn" data-copy="gatewayLocalApiUrl" title="复制本机 API 地址">${icons.copy}</button>
+          </div>
+          <div class="gateway-access-row" id="gatewayTailscaleApiRow" style="display:none">
+            <span class="gateway-access-label">Tailscale</span>
+            <code class="gateway-access-value" id="gatewayTailscaleApiUrl"></code>
+            <button class="icon-btn" data-copy="gatewayTailscaleApiUrl" title="复制 Tailscale API 地址">${icons.copy}</button>
+          </div>
+          <div class="gateway-access-note" id="gatewayTailscaleHint" style="display:none"></div>
+          <div class="gateway-access-note">切换监听地址需要重启 Gateway 生效；这里仅复制命令或快捷方式创建命令，不会自动重启。</div>
+          <div class="gateway-command-actions">
+            <button id="copyRemoteStartCommandBtn">${icons.copy} 复制远程启动命令</button>
+            <button id="copyRemoteShortcutCommandBtn">${icons.copy} 复制创建远程快捷方式命令</button>
+          </div>
+          <div class="card-footer gateway-access-footer">
+            <span class="footer-note" id="gatewayListenFooter">仅监听 127.0.0.1</span>
+          </div>
+        </section>
       </div>
     </section>
 
@@ -3453,8 +3588,12 @@ export function renderAdminHtml() {
           <input class="input" id="remoteGatewayBaseUrl" placeholder="http://100.81.61.119:18080/v1" />
           <label class="form-label" for="remoteGatewayApiKey" style="margin-top:10px">远程 API Key</label>
           <input class="input" id="remoteGatewayApiKey" type="password" placeholder="从远程 Gateway 管理页复制 agt_codex_xxx" autocomplete="off" />
+          <label class="switch-row" style="margin-top:8px">
+            <input type="checkbox" id="remoteGatewayRememberKey" />
+            <span>记住远程密钥（仅保存在本机浏览器）</span>
+          </label>
           <div class="codex-app-note" style="margin-top:12px">
-            这里不会保存远程 API Key 到本 Gateway；点击“写入本机 Codex App”会备份并覆盖本机 ~/.codex/auth.json 和 config.toml，让本机 Codex App 使用远程 Gateway。
+            默认不会保存远程 API Key 到本 Gateway；勾选“记住远程密钥”后仅保存在本机浏览器。点击“写入本机 Codex App”会备份并覆盖本机 ~/.codex/auth.json 和 config.toml，让本机 Codex App 使用远程 Gateway。
           </div>
           <div class="inline-actions" style="margin-top:12px">
             <button id="testRemoteGatewayBtn">测试远程连接</button>
@@ -3808,7 +3947,7 @@ export function renderAdminHtml() {
             </div>
             <div class="stats-config-card">
               <div class="stats-config-label">集合成员 <span class="stats-pill" id="statsMemberCount">0 个</span></div>
-              <div class="stats-config-value">仅监听 127.0.0.1</div>
+              <div class="stats-config-value" id="statsListenMode">仅监听 127.0.0.1</div>
             </div>
           </div>
           <div class="api-health-result" id="apiHealthResult">点击右上角心跳按钮，会通过真实 /v1/responses 上游请求检查 API/CLI 可用性（只发极短 OK 请求）。</div>
@@ -3857,6 +3996,8 @@ export function renderAdminHtml() {
 <script>
 const ACCOUNT_ORDER_STORAGE_KEY = 'codex-api-gateway.account-order.v1';
 const REMOTE_GATEWAY_BASE_URL_STORAGE_KEY = 'codex-api-gateway.remote-base-url.v1';
+const REMOTE_GATEWAY_API_KEY_STORAGE_KEY = 'codex-api-gateway.remote-api-key.v1';
+const REMOTE_GATEWAY_REMEMBER_KEY_STORAGE_KEY = 'codex-api-gateway.remote-remember-key.v1';
 const RUNTIME_ACTIVITY_HOLD_MS = 12000;
 const API_EQUIVALENT_PRICING = {
   model: 'GPT-5.5',
@@ -4004,6 +4145,49 @@ function saveRemoteGatewayBaseUrl(value) {
   }
 }
 
+function shouldRememberRemoteGatewayKey() {
+  try {
+    return localStorage.getItem(REMOTE_GATEWAY_REMEMBER_KEY_STORAGE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function loadRemoteGatewayApiKey() {
+  if (!shouldRememberRemoteGatewayKey()) return '';
+  try {
+    return localStorage.getItem(REMOTE_GATEWAY_API_KEY_STORAGE_KEY) || '';
+  } catch {
+    return '';
+  }
+}
+
+function setRememberRemoteGatewayKey(remember, apiKey) {
+  try {
+    if (remember) {
+      localStorage.setItem(REMOTE_GATEWAY_REMEMBER_KEY_STORAGE_KEY, '1');
+      const text = String(apiKey || '').trim();
+      if (text) localStorage.setItem(REMOTE_GATEWAY_API_KEY_STORAGE_KEY, text);
+    } else {
+      localStorage.removeItem(REMOTE_GATEWAY_REMEMBER_KEY_STORAGE_KEY);
+      localStorage.removeItem(REMOTE_GATEWAY_API_KEY_STORAGE_KEY);
+    }
+  } catch {
+    // ignore storage failures
+  }
+}
+
+function syncRemoteGatewayRememberControls() {
+  const remember = shouldRememberRemoteGatewayKey();
+  const savedKey = loadRemoteGatewayApiKey();
+  ['apiRemoteGatewayRememberKey', 'remoteGatewayRememberKey'].forEach(function(id) {
+    if ($(id)) $(id).checked = remember;
+  });
+  ['apiRemoteGatewayApiKey', 'remoteGatewayApiKey'].forEach(function(id) {
+    if ($(id) && !$(id).value && savedKey) $(id).value = savedKey;
+  });
+}
+
 function selectedApiServiceTargetMode() {
   const select = $('apiServiceTargetMode');
   return select && select.value === 'remote' ? 'remote' : 'local';
@@ -4024,6 +4208,134 @@ function syncApiServiceTargetMode() {
       ? '播放按钮会把本机 Codex App 指向另一台电脑的 Gateway；本机账号池不会参与请求。'
       : '点击“添加账号”维护本机 API 服务集合；播放按钮会切到本机 API 服务模式。';
   }
+  syncRemoteGatewayRememberControls();
+}
+
+function normalizeGatewayHost(host) {
+  return String(host || '').trim().replace(/^\[(.*)\]$/, '$1');
+}
+
+function gatewayBaseInfo() {
+  const baseUrl = (state.data && state.data.baseUrl) || '';
+  const network = (state.data && state.data.network) || {};
+  let parsed = { protocol: 'http', host: '', port: '' };
+  try {
+    const url = new URL(baseUrl);
+    parsed = {
+      protocol: (url.protocol || 'http:').replace(/:$/, '') || 'http',
+      host: normalizeGatewayHost(url.hostname),
+      port: url.port || (url.protocol === 'https:' ? '443' : '80')
+    };
+  } catch {
+    // keep fallback values
+  }
+  return {
+    baseUrl: baseUrl,
+    protocol: parsed.protocol,
+    host: normalizeGatewayHost(network.listenHost) || parsed.host,
+    port: network.listenPort != null ? String(network.listenPort) : parsed.port
+  };
+}
+
+function hostForGatewayUrl(host) {
+  const value = normalizeGatewayHost(host);
+  if (value && value.includes(':') && !value.startsWith('[')) return '[' + value + ']';
+  return value;
+}
+
+function gatewayApiUrl(host, port) {
+  const suffix = port ? ':' + port : '';
+  return 'http://' + hostForGatewayUrl(host) + suffix + '/v1';
+}
+
+function isGatewayWildcardHost(host) {
+  const value = normalizeGatewayHost(host).toLowerCase();
+  return value === '0.0.0.0' || value === '::' || value === '';
+}
+
+function isGatewayLoopbackHost(host) {
+  const value = normalizeGatewayHost(host).toLowerCase();
+  return value === 'localhost' || value === '::1' || value === '127.0.0.1' || value.startsWith('127.');
+}
+
+function isTailscaleIpv4(value) {
+  const parts = String(value || '').trim().split('.').map(function(part) { return Number(part); });
+  return parts.length === 4
+    && parts.every(function(part) { return Number.isInteger(part) && part >= 0 && part <= 255; })
+    && parts[0] === 100
+    && parts[1] >= 64
+    && parts[1] <= 127;
+}
+
+function tailscaleIpFromState(info) {
+  const data = state.data || {};
+  const candidates = [
+    info && info.host,
+    data.tailscaleIp,
+    data.tailscaleIpv4,
+    data.tailscale && data.tailscale.ip,
+    data.tailscale && data.tailscale.ipv4,
+    data.network && data.network.tailscaleIp,
+    data.network && data.network.tailscaleIpv4,
+    data.localAccess && data.localAccess.tailscaleIp,
+    data.localAccess && data.localAccess.tailscaleIpv4,
+    data.localAccessRuntime && data.localAccessRuntime.tailscaleIp,
+    data.localAccessRuntime && data.localAccessRuntime.tailscaleIpv4
+  ];
+  for (const candidate of candidates) {
+    const value = normalizeGatewayHost(candidate);
+    if (isTailscaleIpv4(value)) return value;
+  }
+  return '';
+}
+
+function currentGatewayPort() {
+  return gatewayBaseInfo().port || '18080';
+}
+
+function remoteStartCommand() {
+  const port = currentGatewayPort();
+  return '$env:CODEX_GATEWAY_HOST="0.0.0.0"; $env:CODEX_GATEWAY_PORT="' + port + '"; npm.cmd start';
+}
+
+function remoteShortcutCommand() {
+  const port = currentGatewayPort();
+  return '.\\scripts\\create-desktop-shortcut.ps1 -RemoteAccess -HostAddress "0.0.0.0" -Port ' + port;
+}
+
+function renderGatewayAccessInfo() {
+  if (!state.data) return;
+  const info = gatewayBaseInfo();
+  const port = info.port || '18080';
+  const host = info.host || '127.0.0.1';
+  const wildcard = isGatewayWildcardHost(host);
+  const remote = wildcard || !isGatewayLoopbackHost(host);
+  const listenHost = wildcard ? '0.0.0.0' : host;
+  const listenText = remote
+    ? '允许 Tailscale/局域网访问(' + listenHost + ')'
+    : '仅本机访问(127.0.0.1)';
+  const footerText = remote
+    ? '监听 ' + listenHost + ' · 切换需重启 Gateway'
+    : '仅监听 127.0.0.1 · 切换需重启 Gateway';
+  const localUrl = gatewayApiUrl((wildcard || isGatewayLoopbackHost(host)) ? '127.0.0.1' : host, port);
+  const tailscaleIp = tailscaleIpFromState(info);
+  const tailscaleUrl = tailscaleIp ? gatewayApiUrl(tailscaleIp, port) : '';
+  const showTailscaleHint = remote && !tailscaleUrl;
+
+  if ($('gatewayListenStatus')) {
+    $('gatewayListenStatus').textContent = remote ? '允许远程访问' : '仅本机访问';
+    $('gatewayListenStatus').classList.toggle('remote', remote);
+  }
+  if ($('gatewayListenMode')) $('gatewayListenMode').textContent = listenText;
+  if ($('gatewayListenFooter')) $('gatewayListenFooter').textContent = footerText;
+  if ($('gatewayLocalApiUrl')) $('gatewayLocalApiUrl').textContent = localUrl;
+  if ($('gatewayTailscaleApiRow')) $('gatewayTailscaleApiRow').style.display = tailscaleUrl ? 'grid' : 'none';
+  if ($('gatewayTailscaleApiUrl')) $('gatewayTailscaleApiUrl').textContent = tailscaleUrl;
+  if ($('gatewayTailscaleHint')) {
+    $('gatewayTailscaleHint').style.display = showTailscaleHint ? 'block' : 'none';
+    $('gatewayTailscaleHint').textContent = showTailscaleHint ? '未检测到 Tailscale IPv4；可先确认 Tailscale 已登录，或手动复制本机的 100.x 地址。' : '';
+  }
+  if ($('statsListenMode')) $('statsListenMode').textContent = listenText;
 }
 
 function exportFileName(count, format) {
@@ -5189,6 +5501,7 @@ function renderApiStatsPanel() {
   if ($('statsChatUrl')) $('statsChatUrl').textContent = chatUrl || '-';
   if ($('statsRoutingStrategy')) $('statsRoutingStrategy').textContent = strategyLabel(local.routingStrategy) + ' / ' + serviceTierModeLabel(local.serviceTierMode);
   if ($('statsMemberCount')) $('statsMemberCount').textContent = ((local.accountIds || []).length || 0) + ' 个';
+  renderGatewayAccessInfo();
   renderApiHealthResult();
   document.querySelectorAll('[data-stats-range]').forEach(function(button) {
     button.classList.toggle('active', button.dataset.statsRange === state.statsRange);
@@ -5816,6 +6129,7 @@ function renderCodexAppState() {
   if ($('apiRemoteGatewayBaseUrl') && !$('apiRemoteGatewayBaseUrl').value) {
     $('apiRemoteGatewayBaseUrl').value = loadRemoteGatewayBaseUrl();
   }
+  syncRemoteGatewayRememberControls();
   if ($('remoteGatewayStatus') && !state.remoteGatewayTest) {
     const baseUrl = app.apiService && app.apiService.baseUrl;
     const remoteActive = apiServiceActive && baseUrl && !/127\.0\.0\.1|localhost|0\.0\.0\.0/i.test(baseUrl);
@@ -5991,6 +6305,7 @@ async function loadState() {
   normalizeAccountOrder();
   state.selectionInitialized = true;
   if ($('baseUrl')) $('baseUrl').textContent = state.data.baseUrl;
+  renderGatewayAccessInfo();
   if ($('apiKeyMasked')) $('apiKeyMasked').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
   if ($('apiSpeedMode')) $('apiSpeedMode').value = (state.data.localAccess && state.data.localAccess.serviceTierMode) || 'normal';
   if ($('apiRoutingStrategy')) $('apiRoutingStrategy').value = state.apiRoutingStrategy;
@@ -6032,6 +6347,18 @@ async function loadState() {
 async function copyText(text) {
   await navigator.clipboard.writeText(text);
   toast('已复制');
+}
+
+async function copyRemoteStartCommand() {
+  const command = remoteStartCommand();
+  await copyText(command);
+  setOutput('已复制远程启动命令。切换监听地址需要你手动重启 Gateway 后生效；当前页面不会自动重启。' + String.fromCharCode(10, 10) + command);
+}
+
+async function copyRemoteShortcutCommand() {
+  const command = remoteShortcutCommand();
+  await copyText(command);
+  setOutput('已复制创建远程访问桌面快捷方式命令。请在仓库根目录手动运行；当前页面不会执行脚本，也不会重启 Gateway。' + String.fromCharCode(10, 10) + command);
 }
 
 async function testModels() {
@@ -6099,11 +6426,12 @@ function remoteGatewayForm(source) {
   const fromApiCard = source === 'apiCard';
   const baseInput = fromApiCard ? $('apiRemoteGatewayBaseUrl') : $('remoteGatewayBaseUrl');
   const keyInput = fromApiCard ? $('apiRemoteGatewayApiKey') : $('remoteGatewayApiKey');
+  const rememberInput = fromApiCard ? $('apiRemoteGatewayRememberKey') : $('remoteGatewayRememberKey');
   const baseUrl = baseInput ? baseInput.value.trim() : '';
   const apiKey = keyInput ? keyInput.value.trim() : '';
   if (!baseUrl) throw new Error('请先填写远程 Gateway Base URL');
   if (!apiKey) throw new Error('请先填写远程 Gateway API Key');
-  return { baseUrl, apiKey };
+  return { baseUrl, apiKey, rememberKey: !!(rememberInput && rememberInput.checked) };
 }
 
 function setRemoteGatewayStatus(text, ok, source) {
@@ -6118,6 +6446,15 @@ function setRemoteGatewayStatus(text, ok, source) {
   }
 }
 
+function updateRememberRemoteGatewayKeyFromControl(source) {
+  const fromApiCard = source === 'apiCard';
+  const rememberInput = fromApiCard ? $('apiRemoteGatewayRememberKey') : $('remoteGatewayRememberKey');
+  const keyInput = fromApiCard ? $('apiRemoteGatewayApiKey') : $('remoteGatewayApiKey');
+  const remember = !!(rememberInput && rememberInput.checked);
+  setRememberRemoteGatewayKey(remember, keyInput ? keyInput.value : '');
+  syncRemoteGatewayRememberControls();
+}
+
 async function testRemoteGateway(source) {
   let payload;
   try {
@@ -6127,6 +6464,7 @@ async function testRemoteGateway(source) {
     return;
   }
   saveRemoteGatewayBaseUrl(payload.baseUrl);
+  setRememberRemoteGatewayKey(payload.rememberKey, payload.apiKey);
   setRemoteGatewayStatus('测试中...', null);
   setOutput('正在测试远程 Gateway...');
   const res = await fetch('/_admin/codex-app/remote-api-service/test', {
@@ -6161,6 +6499,7 @@ async function activateRemoteGatewayForCodexApp(source) {
     + '会先测试远程 /v1/models；成功后备份并覆盖本机 ~/.codex/auth.json 和 config.toml，然后自动重启 Codex App。';
   if (!confirm(confirmMessage)) return;
   saveRemoteGatewayBaseUrl(payload.baseUrl);
+  setRememberRemoteGatewayKey(payload.rememberKey, payload.apiKey);
   setRemoteGatewayStatus('写入中...', null, source);
   setOutput('正在写入远程 Gateway API 服务配置...');
   const res = await fetch('/_admin/codex-app/remote-api-service', {
@@ -6625,7 +6964,7 @@ document.addEventListener('click', function(event) {
   const tabTarget = target && target.dataset && target.dataset.tabTarget;
   if (tabTarget) setActiveTab(tabTarget);
   const copy = target && target.dataset && target.dataset.copy;
-  if (copy) copyText($(copy).textContent);
+  if (copy && $(copy)) copyText($(copy).textContent);
   const secret = target && target.dataset && target.dataset.copySecret;
   if (secret) copyText(state.data[secret]);
   const useId = target && target.dataset && target.dataset.useAccount;
@@ -6764,6 +7103,8 @@ if ($('toggleKeyBtn')) $('toggleKeyBtn').onclick = function() {
   if ($('statsApiKey')) $('statsApiKey').textContent = state.showKey ? state.data.apiKey : state.data.apiKeyMasked;
 };
 $('copyChatBtn').onclick = function() { copyText(state.data.baseUrl + '/chat/completions'); };
+if ($('copyRemoteStartCommandBtn')) $('copyRemoteStartCommandBtn').onclick = function() { copyRemoteStartCommand().catch(function(err) { setOutput(String(err)); }); };
+if ($('copyRemoteShortcutCommandBtn')) $('copyRemoteShortcutCommandBtn').onclick = function() { copyRemoteShortcutCommand().catch(function(err) { setOutput(String(err)); }); };
 $('reloadBtn').onclick = loadState;
 $('testModelsBtn').onclick = openApiStatsModal;
 $('apiCallHistoryBtn').onclick = openApiCallHistoryModal;
@@ -6811,6 +7152,8 @@ $('testRemoteGatewayBtn').onclick = function() { testRemoteGateway().catch(funct
 $('activateRemoteGatewayBtn').onclick = function() { activateRemoteGatewayForCodexApp().catch(function(err) { setRemoteGatewayStatus('写入失败', false); setOutput(String(err)); }); };
 $('apiServiceTargetMode').onchange = syncApiServiceTargetMode;
 $('apiTestRemoteGatewayBtn').onclick = function() { testRemoteGateway('apiCard').catch(function(err) { setRemoteGatewayStatus('测试失败', false, 'apiCard'); setOutput(String(err)); }); };
+$('apiRemoteGatewayRememberKey').onchange = function() { updateRememberRemoteGatewayKeyFromControl('apiCard'); };
+$('remoteGatewayRememberKey').onchange = function() { updateRememberRemoteGatewayKeyFromControl(); };
 $('runWakeupBtn').onclick = function() { runWakeup(); };
 $('refreshSelectedQuotaBtn').onclick = function() { refreshQuota(); };
 $('loadWakeupHistoryBtn').onclick = loadWakeupHistory;
