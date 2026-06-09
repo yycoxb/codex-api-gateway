@@ -14,7 +14,8 @@
 - 管理界面：`http://127.0.0.1:18080/_admin`
 - 多账号导入与切换
 - Codex OAuth 添加账号
-- Cockpit 兼容 JSON 导入/导出
+- Gateway / Cockpit / sub2api / CPA JSON 导入/导出
+- 本地账号格式转换：支持把 ChatGPT/Codex session、sub2api、CPA、Cockpit JSON 转为本项目可导入格式
 - API 服务账号集合
 - 按策略调用账号，例如优先使用快到期账号
 - 额度查看与自动刷新
@@ -24,9 +25,11 @@
 ## 环境要求
 
 - Windows / macOS / Linux 均可运行 Node 服务
-- Node.js `>= 18`
+- Node.js `>= 24`
 - 已拥有可用的 Codex / ChatGPT 账号
 - 如需使用 `gpt-image-2` 图片接口，需要在启动 Gateway 的进程环境中设置 `OPENAI_API_KEY` 或 `CODEX_GATEWAY_OPENAI_API_KEY`
+
+> 项目使用了 Node 内置 `node:sqlite`。为了另一台电脑开箱即用，建议直接安装 Node.js 24 LTS 或更新版本。
 
 Windows 用户可以直接使用项目里的 `.cmd` 启动脚本。
 
@@ -70,6 +73,41 @@ Codex API Gateway.cmd
 Stop Codex API Gateway.cmd
 ```
 
+## 在另一台电脑上使用
+
+另一台电脑只需要从 GitHub 拉取源代码，账号和 API Key 需要在那台电脑本地重新配置：
+
+```powershell
+git clone https://github.com/yycoxb/codex-api-gateway.git
+cd codex-api-gateway
+npm install
+npm start
+```
+
+然后打开：
+
+```text
+http://127.0.0.1:18080/_admin
+```
+
+首次使用请选择一种方式添加账号：
+
+1. **OAuth 授权**：推荐方式，在新电脑上重新登录自己的 Codex / ChatGPT 账号。
+2. **导入账号 JSON**：在旧电脑管理页导出账号，再通过可信方式复制到新电脑后导入。
+3. **本地格式转换**：如果手头是 ChatGPT/Codex session、sub2api、CPA 或 Cockpit JSON，可在管理页 `Token / JSON` 里先转换，再导入。
+
+不要通过 GitHub 同步账号数据。下面这些文件只属于每台电脑本地运行环境：
+
+```text
+~/.codex-api-gateway/
+~/.codex/
+auth.json
+accounts.json
+config.json
+.env
+exported account JSON
+```
+
 ## 打开管理界面
 
 服务启动后打开：
@@ -99,7 +137,7 @@ http://127.0.0.1:18080/_admin
 可选方式：
 
 1. **OAuth 授权**：按页面提示登录自己的 Codex 账号。
-2. **Token / JSON 导入**：导入自己的 `auth.json`、单账号 JSON 或 Cockpit 导出的账号数组。
+2. **Token / JSON 导入**：导入自己的 `auth.json`、单账号 JSON、Gateway / Cockpit / sub2api / CPA 导出的账号 JSON，或 ChatGPT/Codex session JSON。
 3. **本地导入**：读取当前电脑的 `~/.codex/auth.json`。
 
 导入后账号会保存到本机：
@@ -107,6 +145,31 @@ http://127.0.0.1:18080/_admin
 ```text
 ~/.codex-api-gateway/accounts.json
 ```
+
+### 本地格式转换
+
+管理页的 `添加账号 → Token / JSON → 本地格式转换` 可以在本机完成格式转换，不会上传到外部服务，也不会保存转换历史。
+
+支持输入：
+
+```text
+gateway
+cockpit-tools
+sub2api
+cpa / token storage
+ChatGPT/Codex session JSON
+```
+
+支持输出：
+
+```text
+gateway
+cockpit-tools
+sub2api
+cpa / token storage
+```
+
+如果输入缺少真实 `id_token`，Gateway 会根据 `access_token` claims 合成 Codex 可解析的占位 `id_token`，并标记为 `synthetic-id-token`。这种账号可以短期使用；如果有真实 `refresh_token`，后续仍可自动刷新。
 
 ## 在客户端中使用
 

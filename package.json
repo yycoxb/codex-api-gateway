@@ -10,6 +10,6 @@
     "doctor": "node src/server.js doctor"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=24"
   }
 }
