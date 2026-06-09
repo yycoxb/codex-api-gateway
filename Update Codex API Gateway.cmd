@@ -2,7 +2,16 @@
 setlocal
 title Update Codex API Gateway
 
-cd /d "%~dp0"
+set "SCRIPT_DIR=%~dp0"
+set "REPO_DIR=%SCRIPT_DIR%"
+
+if not exist "%REPO_DIR%\.git\" (
+  if exist "%USERPROFILE%\codex-api-gateway\.git\" (
+    set "REPO_DIR=%USERPROFILE%\codex-api-gateway"
+  )
+)
+
+cd /d "%REPO_DIR%"
 echo.
 echo Updating Codex API Gateway in:
 echo   %CD%

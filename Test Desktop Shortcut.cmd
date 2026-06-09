@@ -11,7 +11,16 @@ echo Script location:
 echo   %~dp0
 echo.
 
-cd /d "%~dp0"
+set "SCRIPT_DIR=%~dp0"
+set "REPO_DIR=%SCRIPT_DIR%"
+
+if not exist "%REPO_DIR%\.git\" (
+  if exist "%USERPROFILE%\codex-api-gateway\.git\" (
+    set "REPO_DIR=%USERPROFILE%\codex-api-gateway"
+  )
+)
+
+cd /d "%REPO_DIR%"
 echo Current working directory after cd:
 echo   %CD%
 echo.
