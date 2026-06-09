@@ -446,6 +446,55 @@ function normalizeOptional(value) {
   return text ? text : null;
 }
 
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value), 'utf8')
+    .toString('base64')
+    .replace(/=/g, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_');
+}
+
+function epochSecondsFromValue(value) {
+  if (value === undefined || value === null || value === '') return 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return Math.trunc(numeric > 100_000_000_000 ? numeric / 1000 : numeric);
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? Math.trunc(parsed / 1000) : 0;
+}
+
+function buildSyntheticCodexIdToken({ accessToken, email, accountId, planType, userId, expiresAt }) {
+  const resolvedAccountId = normalizeOptional(accountId || extractAccountId(accessToken, null));
+  if (!resolvedAccountId) return null;
+  const accessPayload = decodeJwtPayload(accessToken) || {};
+  const accessAuth = accessPayload['https://api.openai.com/auth'] || {};
+  const now = Math.floor(nowMs() / 1000);
+  const expires = epochSecondsFromValue(expiresAt) || Number(accessPayload.exp || 0) || now + 90 * 24 * 60 * 60;
+  const resolvedUserId = normalizeOptional(userId || accessAuth.chatgpt_user_id || accessAuth.user_id);
+  const auth = {
+    chatgpt_account_id: resolvedAccountId,
+  };
+  const resolvedPlan = normalizeOptional(planType || accessAuth.chatgpt_plan_type);
+  if (resolvedPlan) auth.chatgpt_plan_type = resolvedPlan;
+  if (resolvedUserId) {
+    auth.chatgpt_user_id = resolvedUserId;
+    auth.user_id = resolvedUserId;
+  }
+  const payload = {
+    iat: now,
+    exp: expires,
+    'https://api.openai.com/auth': auth,
+  };
+  const resolvedEmail = normalizeOptional(email || accessPayload?.['https://api.openai.com/profile']?.email || accessPayload.email);
+  if (resolvedEmail) payload.email = resolvedEmail;
+  if (accessPayload.iss) payload.iss = accessPayload.iss;
+  if (accessPayload.aud) payload.aud = accessPayload.aud;
+  if (accessPayload.client_id) payload.client_id = accessPayload.client_id;
+  if (accessPayload.sub) payload.sub = accessPayload.sub;
+  return `${base64UrlJson({ alg: 'none', typ: 'JWT', cpa_synthetic: true })}.${base64UrlJson(payload)}.synthetic`;
+}
+
 function hasUsableRefreshToken(value) {
   const text = normalizeOptional(value);
   if (!text) return false;
@@ -924,35 +973,70 @@ function detectImportFormat(parsed, requestedFormat) {
 function normalizeSub2apiImportItem(item) {
   if (!looksLikeSub2apiAccount(item)) return item;
   const credentials = item.credentials || {};
+  const accessToken = normalizeOptional(credentials.access_token || credentials.accessToken);
+  const accountId = normalizeOptional(credentials.chatgpt_account_id || credentials.account_id || item.account_id);
+  const planType = normalizeOptional(credentials.plan_type || item.plan_type);
+  const userId = normalizeOptional(credentials.chatgpt_user_id || credentials.user_id || item.user_id);
+  const email = normalizeOptional(credentials.email || item.email || item.name);
+  const expiresAt = normalizeOptional(credentials.expires_at || item.expires_at || credentials.expired || item.expired);
+  const idToken = normalizeOptional(credentials.id_token) || buildSyntheticCodexIdToken({
+    accessToken,
+    email,
+    accountId,
+    planType,
+    userId,
+    expiresAt,
+  });
   return compactObject({
-    email: credentials.email || item.email || undefined,
-    account_id: credentials.chatgpt_account_id || credentials.account_id || item.account_id || undefined,
-    user_id: credentials.chatgpt_user_id || credentials.user_id || item.user_id || undefined,
+    email: email || undefined,
+    account_id: accountId || undefined,
+    user_id: userId || undefined,
     organization_id: credentials.organization_id || item.organization_id || undefined,
     account_name: item.name || item.account_name || undefined,
-    plan_type: credentials.plan_type || item.plan_type || undefined,
+    plan_type: planType || undefined,
     subscription_active_until: credentials.subscription_expires_at || item.subscription_active_until || undefined,
+    token_updated_at: credentials.last_refresh || item.last_refresh || undefined,
     auth_mode: 'oauth',
+    token_source_mode: credentials.id_token ? 'managed' : 'synthetic-id-token',
     tokens: {
-      id_token: credentials.id_token,
-      access_token: credentials.access_token,
+      id_token: idToken,
+      access_token: accessToken,
       refresh_token: credentials.refresh_token || null,
     },
+    tags: credentials.id_token ? undefined : ['synthetic-id-token'],
   });
 }
 
 function normalizeCpaImportItem(item) {
   if (!looksLikeCpaTokenStorage(item)) return item;
+  const accessToken = normalizeOptional(item.access_token || item.accessToken);
+  const accountId = normalizeOptional(item.account_id || item.chatgpt_account_id);
+  const planType = normalizeOptional(item.plan_type || item.chatgpt_plan_type);
+  const userId = normalizeOptional(item.user_id || item.chatgpt_user_id);
+  const email = normalizeOptional(item.email || item.name);
+  const expiresAt = normalizeOptional(item.expired || item.expires_at || item.expiresAt);
+  const idToken = normalizeOptional(item.id_token || item.idToken) || buildSyntheticCodexIdToken({
+    accessToken,
+    email,
+    accountId,
+    planType,
+    userId,
+    expiresAt,
+  });
   return compactObject({
-    email: item.email || undefined,
-    account_id: item.account_id || undefined,
+    email: email || undefined,
+    account_id: accountId || undefined,
+    user_id: userId || undefined,
+    plan_type: planType || undefined,
     token_updated_at: item.last_refresh || undefined,
     auth_mode: 'oauth',
+    token_source_mode: item.id_token ? 'managed' : 'synthetic-id-token',
     tokens: {
-      id_token: item.id_token,
-      access_token: item.access_token,
+      id_token: idToken,
+      access_token: accessToken,
       refresh_token: item.refresh_token || null,
     },
+    tags: item.id_token ? undefined : ['synthetic-id-token'],
   });
 }
 
