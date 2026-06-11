@@ -7728,15 +7728,18 @@ $('toggleOutputBtn').onclick = function() { $('outputPanel').classList.remove('s
 
 bindAccountCardLightFollow();
 
+const initialTab = location.hash === '#wakeup'
+  ? 'wakeup'
+  : (location.hash === '#codexapp'
+    ? 'codexapp'
+    : (location.hash === '#sessions'
+      ? 'sessions'
+      : (location.hash === '#processes' ? 'processes' : 'overview')));
+setActiveTab(initialTab);
+
 loadState()
   .then(function() {
-    setActiveTab(location.hash === '#wakeup'
-      ? 'wakeup'
-      : (location.hash === '#codexapp'
-        ? 'codexapp'
-        : (location.hash === '#sessions'
-          ? 'sessions'
-          : (location.hash === '#processes' ? 'processes' : 'overview'))));
+    setActiveTab(state.activeTab || initialTab);
   })
   .catch(function(err) { setOutput(String(err)); });
 </script>

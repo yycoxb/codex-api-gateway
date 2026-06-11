@@ -6,6 +6,7 @@ const DAY_WINDOW_MS = 24 * 60 * 60 * 1000;
 const WEEK_WINDOW_MS = 7 * DAY_WINDOW_MS;
 const MONTH_WINDOW_MS = 30 * DAY_WINDOW_MS;
 const MAX_RECENT_USAGE_EVENTS = 50_000;
+const DEFAULT_SUMMARY_ACCOUNT_LIMIT = 1_000;
 const STATS_TMP_MAX_AGE_MS = 10 * 60 * 1000;
 const STATS_TMP_CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
@@ -407,6 +408,40 @@ function normalizeStats(raw) {
 export async function loadLocalAccessStats() {
   await cleanupStaleStatsTemps();
   return normalizeStats(await readJson(LOCAL_ACCESS_STATS_PATH, null));
+}
+
+function summarizeStatsWindow(window, accountLimit = DEFAULT_SUMMARY_ACCOUNT_LIMIT) {
+  const accounts = Array.isArray(window?.accounts) ? window.accounts : [];
+  return {
+    since: positiveInteger(window?.since),
+    updatedAt: positiveInteger(window?.updatedAt),
+    totals: window?.totals || emptyUsageStats(),
+    accounts: accounts.slice(0, accountLimit),
+    accountCount: accounts.length,
+    accountsOmitted: Math.max(0, accounts.length - accountLimit),
+  };
+}
+
+export function summarizeLocalAccessStats(stats, options = {}) {
+  const accountLimit = positiveInteger(options.accountLimit) || DEFAULT_SUMMARY_ACCOUNT_LIMIT;
+  const source = stats && typeof stats === 'object' ? stats : emptyStatsSnapshot();
+  const accounts = Array.isArray(source.accounts) ? source.accounts : [];
+  const events = Array.isArray(source.events) ? source.events : [];
+  return {
+    since: positiveInteger(source.since),
+    updatedAt: positiveInteger(source.updatedAt),
+    totals: source.totals || emptyUsageStats(),
+    accounts: accounts.slice(0, accountLimit),
+    accountCount: accounts.length,
+    accountsOmitted: Math.max(0, accounts.length - accountLimit),
+    failureClearedAtByAccount: source.failureClearedAtByAccount || {},
+    daily: summarizeStatsWindow(source.daily, accountLimit),
+    weekly: summarizeStatsWindow(source.weekly, accountLimit),
+    monthly: summarizeStatsWindow(source.monthly, accountLimit),
+    eventCount: events.length,
+    eventsOmitted: events.length,
+    events: [],
+  };
 }
 
 export async function clearLocalAccessStats() {
