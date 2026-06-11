@@ -44,14 +44,6 @@ function accountIdentityHashes(account) {
   return [...new Set(candidates.map(([kind, value]) => stableHash(`${kind}:${value}`)))];
 }
 
-function deletedAccountMatchHashes(account) {
-  const candidates = [
-    ['id', normalizedIdentityValue(account?.id)],
-    ['sourceId', normalizedIdentityValue(account?.sourceId)],
-  ].filter(([, value]) => value);
-  return [...new Set(candidates.map(([kind, value]) => stableHash(`${kind}:${value}`)))];
-}
-
 function normalizeDeletedAccountStore(raw) {
   const rows = Array.isArray(raw?.identities)
     ? raw.identities
@@ -108,9 +100,7 @@ async function clearDeletedAccountMarkers(account) {
 }
 
 async function isAccountMarkedDeleted(account) {
-  // 删除标记只用于防止“同一条 Gateway 账号记录”从旧投影回流。
-  // 不再用 email/accountId/userId 做拦截，避免同一登录身份下的其它正常账号被误伤隐藏。
-  const hashes = deletedAccountMatchHashes(account);
+  const hashes = accountIdentityHashes(account);
   if (!hashes.length) return false;
   const store = await loadDeletedAccountStore();
   const deleted = new Set(store.identities.map((item) => item.hash));
