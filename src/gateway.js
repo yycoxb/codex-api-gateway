@@ -1459,7 +1459,7 @@ async function handleRotateKey(req, res, config) {
 }
 
 async function handleImportCurrent(req, res) {
-  const account = await importFromCodexAuth();
+  const account = await importFromCodexAuth({ respectDeleted: false });
   return jsonResponse(res, 200, {
     ok: true,
     account: { id: account.id, email: account.email, accountId: account.accountId },
@@ -1565,7 +1565,19 @@ async function handleUseAccount(req, res) {
 async function handleDeleteAccount(req, res, u) {
   const accountId = u.searchParams.get('accountId');
   if (!accountId) return jsonResponse(res, 400, { error: 'missing accountId' });
-  return jsonResponse(res, 200, { ok: true, ...(await deleteAccount(accountId)) });
+  const result = await deleteAccount(accountId);
+  const localAccess = await loadLocalAccessConfig();
+  const nextAccountIds = (localAccess.accountIds || []).filter((id) => id !== accountId);
+  let localAccessUpdated = false;
+  if (nextAccountIds.length !== (localAccess.accountIds || []).length) {
+    await saveLocalAccessConfig({
+      ...localAccess,
+      accountIds: nextAccountIds,
+      customRoutingRules: (localAccess.customRoutingRules || []).filter((rule) => rule.accountId !== accountId),
+    });
+    localAccessUpdated = true;
+  }
+  return jsonResponse(res, 200, { ok: true, ...result, localAccessUpdated });
 }
 
 async function handleWakeup(req, res) {

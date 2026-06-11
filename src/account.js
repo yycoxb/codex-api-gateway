@@ -1,7 +1,7 @@
 ﻿import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
-import { ACCOUNT_PATH, ACCOUNTS_PATH, CLIENT_ID, TOKEN_ENDPOINT } from './constants.js';
+import { ACCOUNT_PATH, ACCOUNTS_PATH, CLIENT_ID, DELETED_ACCOUNTS_PATH, TOKEN_ENDPOINT } from './constants.js';
 import { readJson, writeJson } from './storage.js';
 import { nowMs } from './utils.js';
 import { decodeJwtPayload, extractAccountId, extractEmail, isTokenExpired } from './jwt.js';
@@ -17,6 +17,7 @@ const REFRESH_REAUTH_PATTERNS = [
 ];
 
 const accountTokenLocks = new Map();
+const DELETED_ACCOUNT_KEEP_COUNT = 500;
 
 export function codexHome() {
   const raw = process.env.CODEX_HOME?.trim();
@@ -25,6 +26,85 @@ export function codexHome() {
 
 function stableHash(value) {
   return crypto.createHash('sha256').update(value).digest('hex').slice(0, 24);
+}
+
+function normalizedIdentityValue(value, { lower = false } = {}) {
+  const text = String(value || '').trim();
+  return lower ? text.toLowerCase() : text;
+}
+
+function accountIdentityHashes(account) {
+  const candidates = [
+    ['id', normalizedIdentityValue(account?.id)],
+    ['sourceId', normalizedIdentityValue(account?.sourceId)],
+    ['accountId', normalizedIdentityValue(account?.accountId)],
+    ['email', normalizedIdentityValue(account?.email, { lower: true })],
+    ['userId', normalizedIdentityValue(account?.userId)],
+  ].filter(([, value]) => value);
+  return [...new Set(candidates.map(([kind, value]) => stableHash(`${kind}:${value}`)))];
+}
+
+function normalizeDeletedAccountStore(raw) {
+  const rows = Array.isArray(raw?.identities)
+    ? raw.identities
+    : (Array.isArray(raw) ? raw : []);
+  const seen = new Set();
+  const identities = [];
+  for (const row of rows) {
+    const hash = String(row?.hash || row || '').trim();
+    if (!hash || seen.has(hash)) continue;
+    seen.add(hash);
+    identities.push({
+      hash,
+      deletedAt: Number(row?.deletedAt || row?.deleted_at || 0) || null,
+    });
+  }
+  return {
+    version: 1,
+    identities: identities.slice(-DELETED_ACCOUNT_KEEP_COUNT),
+  };
+}
+
+async function loadDeletedAccountStore() {
+  return normalizeDeletedAccountStore(await readJson(DELETED_ACCOUNTS_PATH, null));
+}
+
+async function saveDeletedAccountStore(store) {
+  await writeJson(DELETED_ACCOUNTS_PATH, normalizeDeletedAccountStore(store));
+}
+
+async function rememberDeletedAccount(account) {
+  const hashes = accountIdentityHashes(account);
+  if (!hashes.length) return { remembered: 0 };
+  const store = await loadDeletedAccountStore();
+  const now = nowMs();
+  const byHash = new Map(store.identities.map((item) => [item.hash, item]));
+  for (const hash of hashes) {
+    byHash.set(hash, { hash, deletedAt: now });
+  }
+  const identities = Array.from(byHash.values())
+    .sort((left, right) => Number(left.deletedAt || 0) - Number(right.deletedAt || 0))
+    .slice(-DELETED_ACCOUNT_KEEP_COUNT);
+  await saveDeletedAccountStore({ version: 1, identities });
+  return { remembered: hashes.length };
+}
+
+async function clearDeletedAccountMarkers(account) {
+  const hashes = new Set(accountIdentityHashes(account));
+  if (!hashes.size) return { cleared: 0 };
+  const store = await loadDeletedAccountStore();
+  const identities = store.identities.filter((item) => !hashes.has(item.hash));
+  const cleared = store.identities.length - identities.length;
+  if (cleared > 0) await saveDeletedAccountStore({ version: 1, identities });
+  return { cleared };
+}
+
+async function isAccountMarkedDeleted(account) {
+  const hashes = accountIdentityHashes(account);
+  if (!hashes.length) return false;
+  const store = await loadDeletedAccountStore();
+  const deleted = new Set(store.identities.map((item) => item.hash));
+  return hashes.some((hash) => deleted.has(hash));
 }
 
 function normalizePlanFamily(planType) {
@@ -826,6 +906,7 @@ async function migrateLegacyAccountIfNeeded(store) {
     importedAt: legacy.importedAt || nowMs(),
     updatedAt: legacy.updatedAt || nowMs(),
   };
+  if (await isAccountMarkedDeleted(account)) return store;
   store.accounts.push(account);
   store.currentAccountId = account.id;
   await saveAccountStore(store);
@@ -1155,6 +1236,7 @@ async function upsertAccounts(accounts, makeCurrentSourceId = null) {
     }
 
     imported.push(accountSummary(saved));
+    await clearDeletedAccountMarkers(saved);
     if (makeCurrentSourceId && (account.id === makeCurrentSourceId || saved.id === makeCurrentSourceId)) {
       resolvedCurrentId = saved.id;
     }
@@ -1184,11 +1266,16 @@ async function upsertAccount(account, makeCurrent = true) {
   return store.accounts.find((item) => item.id === result.imported[0]?.id) || account;
 }
 
-export async function importFromCodexAuth() {
+export async function importFromCodexAuth({ respectDeleted = true } = {}) {
   const authPath = path.join(codexHome(), 'auth.json');
   const auth = await readJson(authPath, null);
   if (!auth) throw new Error(`未找到或无法解析 ${authPath}`);
   const account = accountFromAuthObject(auth, authPath);
+  if (respectDeleted && await isAccountMarkedDeleted(account)) {
+    const err = new Error('当前 Codex App 登录账号已被用户从 Gateway 账号池删除；如需重新加入，请手动点击“导入当前 Codex App 账号”。');
+    err.code = 'ACCOUNT_DELETED_BY_USER';
+    throw err;
+  }
   return await upsertAccount(account, true);
 }
 
@@ -1332,16 +1419,18 @@ export async function setCurrentAccount(accountId) {
 
 export async function deleteAccount(accountId) {
   const store = await loadAccountStore();
+  const deleted = store.accounts.find((item) => item.id === accountId);
   const before = store.accounts.length;
   store.accounts = store.accounts.filter((item) => item.id !== accountId);
   if (store.accounts.length === before) throw new Error(`账号不存在: ${accountId}`);
   if (store.currentAccountId === accountId) {
     store.currentAccountId = store.accounts[0]?.id || null;
   }
+  const deletedMarker = await rememberDeletedAccount(deleted);
   await saveAccountStore(store);
   const current = store.accounts.find((item) => item.id === store.currentAccountId) || null;
   if (current) await saveCurrentProjection(current);
-  return { currentAccountId: store.currentAccountId, deletedAccountId: accountId };
+  return { currentAccountId: store.currentAccountId, deletedAccountId: accountId, deletedMarkerCount: deletedMarker.remembered };
 }
 
 export async function saveAccount(account) {
