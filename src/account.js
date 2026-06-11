@@ -833,11 +833,18 @@ async function migrateLegacyAccountIfNeeded(store, allowLegacyMigration) {
   return store;
 }
 
-export async function loadAccountStore() {
+async function loadAccountStoreWithMeta() {
   const missing = Symbol('missing-account-store');
   const raw = await readJson(ACCOUNTS_PATH, missing);
   const store = normalizeStore(raw === missing ? null : raw);
-  return await migrateLegacyAccountIfNeeded(store, raw === missing);
+  return {
+    store: await migrateLegacyAccountIfNeeded(store, raw === missing),
+    missing: raw === missing,
+  };
+}
+
+export async function loadAccountStore() {
+  return (await loadAccountStoreWithMeta()).store;
 }
 
 export async function saveAccountStore(store) {
@@ -1300,8 +1307,8 @@ export async function listAccounts() {
 }
 
 export async function loadAccount() {
-  let store = await loadAccountStore();
-  if (store.accounts.length === 0) {
+  let { store, missing } = await loadAccountStoreWithMeta();
+  if (store.accounts.length === 0 && missing) {
     await importFromCodexAuth();
     store = await loadAccountStore();
   }
