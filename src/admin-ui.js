@@ -1929,6 +1929,68 @@ export function renderAdminHtml() {
       color: var(--text-muted);
     }
 
+    .session-manager-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 18px;
+    }
+
+    .session-filter-switch {
+      margin: 0;
+      min-height: 38px;
+      padding: 0 10px;
+      border: 1px solid var(--border-light);
+      border-radius: var(--radius-full);
+      background: rgba(255, 255, 255, .62);
+    }
+
+    .session-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .session-row {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 12px;
+      padding: 14px 16px;
+      border: 1px solid var(--border-light);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, .78);
+      font-weight: 850;
+    }
+
+    .session-row.disabled {
+      opacity: .58;
+    }
+
+    .session-title {
+      min-width: 0;
+      color: var(--text-primary);
+      font-weight: 950;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .session-meta,
+    .session-sub {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+
+    .session-sub {
+      color: var(--text-muted);
+    }
+
     .stats-account-row {
       display: grid;
       grid-template-columns: minmax(0, 1fr) auto auto auto auto;
@@ -3080,7 +3142,9 @@ export function renderAdminHtml() {
     .stats-config-card,
     .stats-config-value,
     .call-history-row,
-    .stats-account-row {
+    .stats-account-row,
+    .session-row,
+    .session-filter-switch {
       border-color: var(--border-light);
       background: rgba(18, 16, 10, .72);
     }
@@ -3352,6 +3416,7 @@ export function renderAdminHtml() {
       .stats-grid,
       .stats-config-grid { grid-template-columns: 1fr; }
       .call-history-row { grid-template-columns: 1fr; }
+      .session-row { grid-template-columns: 1fr; }
       .stats-account-row { grid-template-columns: 1fr; align-items: stretch; }
       .api-pool-row { grid-template-columns: auto minmax(0, 1fr) auto; }
       .api-pool-priority { grid-column: 2 / -1; justify-content: flex-start; }
@@ -3393,6 +3458,8 @@ export function renderAdminHtml() {
         <button class="tab-btn active" data-tab-target="overview">${icons.grid}<span>账号总览</span></button>
         <button class="tab-btn" data-tab-target="codexapp">${icons.server}<span>Codex App</span></button>
         <button class="tab-btn" data-tab-target="wakeup">${icons.play}<span>唤醒任务</span></button>
+        <button class="tab-btn" data-tab-target="sessions">${icons.database}<span>会话管理</span></button>
+        <button class="tab-btn" data-tab-target="processes">${icons.activity}<span>进程清理</span></button>
       </nav>
     </header>
 
@@ -3696,6 +3763,87 @@ export function renderAdminHtml() {
             </section>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="tab-page" id="tab-sessions">
+      <div class="session-manager-layout">
+        <section class="panel-card session-manager-hero">
+          <div class="card-head">
+            <div class="card-brand">
+              <div class="card-icon">${icons.database}</div>
+              <div class="card-title">
+                <h1>会话管理</h1>
+                <p>只显示会话元信息；不读取展示 prompt/content/token。</p>
+              </div>
+            </div>
+            <span class="status-pill" id="sessionManagerStatus">未加载</span>
+          </div>
+          <div class="codex-app-note">
+            默认显示全部会话元信息，便于发现当前 provider 不匹配导致的不可见会话；勾选“仅归档”可专注清理归档。删除会先备份，修复可见性只同步 provider 元信息；不会删除账号或密钥。
+          </div>
+        </section>
+
+        <section class="panel-card session-manager-panel">
+          <div class="card-head">
+            <div>
+              <h2>会话列表</h2>
+              <p class="panel-subtitle">可删除已归档会话，也可把 provider 不匹配的未归档会话同步到当前 Codex App provider。</p>
+            </div>
+            <div class="inline-actions">
+              <label class="switch-row session-filter-switch"><input type="checkbox" id="sessionArchivedOnly" /> <span>仅归档</span></label>
+              <button id="refreshSessionsBtn">${icons.refresh} 刷新</button>
+              <button id="selectAllSessionsBtn">全选可删</button>
+              <button id="selectRepairableSessionsBtn">全选可修复</button>
+              <button id="clearSessionSelectionBtn">清空</button>
+              <button id="repairSelectedSessionsBtn">${icons.play} 修复可见性</button>
+              <button class="danger" id="deleteSelectedSessionsBtn">${icons.trash} 删除选中</button>
+            </div>
+          </div>
+          <div class="api-health-result" id="sessionManagerHint">这里不会展示会话正文，只显示标题、工作区、更新时间、归档状态和文件位置。</div>
+          <div class="session-list" id="sessionList">
+            <div class="empty-state">点击“刷新”加载归档会话。</div>
+          </div>
+        </section>
+      </div>
+    </section>
+
+    <section class="tab-page" id="tab-processes">
+      <div class="session-manager-layout">
+        <section class="panel-card">
+          <div class="card-head">
+            <div class="card-brand">
+              <div class="card-icon">${icons.activity}</div>
+              <div class="card-title">
+                <h1>进程清理</h1>
+                <p>安全清理疑似 Codex MCP / Node 子进程，避免误杀 Gateway。</p>
+              </div>
+            </div>
+            <span class="status-pill" id="processCleanupStatus">未扫描</span>
+          </div>
+          <div class="codex-app-note">
+            不会执行 <code>taskkill /IM node.exe</code> 这种全局清理；这里只允许终止被识别为 MCP/工具服务且不属于当前 Gateway 仓库的进程。Codex 需要时通常会重新拉起 MCP。
+          </div>
+        </section>
+
+        <section class="panel-card">
+          <div class="card-head">
+            <div>
+              <h2>MCP / Node 进程</h2>
+              <p class="panel-subtitle">先扫描，再选择“可清理”的进程。命令行会做密钥脱敏和长度截断。</p>
+            </div>
+            <div class="inline-actions">
+              <button id="refreshProcessCleanupBtn">${icons.refresh} 扫描</button>
+              <button id="selectKillableProcessesBtn">全选可清理</button>
+              <button id="clearProcessSelectionBtn">清空</button>
+              <button class="danger" id="killSelectedProcessesBtn">${icons.trash} 终止选中</button>
+            </div>
+          </div>
+          <div class="api-health-result" id="processCleanupHint">建议在没有本地 Node 开发服务需要保留时使用。当前 Gateway 和本仓库相关 Node 进程会被保护。</div>
+          <div class="session-list" id="processCleanupList">
+            <div class="empty-state">点击“扫描”查看疑似 MCP / Node 进程。</div>
+          </div>
+        </section>
       </div>
     </section>
 
@@ -4031,6 +4179,19 @@ const state = {
   runtimeDiagnosticsOpen: false,
   loadingState: false,
   statsRange: 'daily',
+  sessions: [],
+  sessionsLoaded: false,
+  sessionsLoading: false,
+  sessionsArchivedOnly: false,
+  sessionsCurrentProvider: null,
+  sessionProviderMismatchCount: 0,
+  sessionRepairableVisibilityCount: 0,
+  selectedSessionIds: new Set(),
+  nodeProcesses: [],
+  nodeProcessesLoaded: false,
+  nodeProcessesLoading: false,
+  selectedNodeProcessIds: new Set(),
+  nodeProcessSummary: null,
   addTab: 'oauth',
   oauthLoginId: null,
   oauthUrl: '',
@@ -5657,6 +5818,330 @@ function closeApiCallHistoryModal() {
   }
 }
 
+function selectedArchivedSessions() {
+  return (state.sessions || []).filter(function(item) {
+    return item.archived && state.selectedSessionIds.has(item.id);
+  });
+}
+
+function selectedRepairableSessions() {
+  return (state.sessions || []).filter(function(item) {
+    return item.canRepairVisibility && state.selectedSessionIds.has(item.id);
+  });
+}
+
+function sessionVisibilityLabel(item) {
+  if (item.archived) return '\u5df2\u5f52\u6863';
+  if (item.providerMismatch || item.fileProviderMismatch) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
+  return '\u5f53\u524d\u6a21\u5f0f\u53ef\u89c1';
+}
+
+function syncSessionControls() {
+  const selectedDelete = selectedArchivedSessions().length;
+  const selectedRepair = selectedRepairableSessions().length;
+  const provider = state.sessionsCurrentProvider || 'openai';
+  if ($('sessionManagerStatus')) {
+    $('sessionManagerStatus').textContent = state.sessionsLoading
+      ? '\u52a0\u8f7d\u4e2d'
+      : ('provider=' + provider + ' \u00b7 \u5df2\u52a0\u8f7d ' + (state.sessions || []).length + ' \u4e2a'
+        + (state.sessionRepairableVisibilityCount ? (' \u00b7 \u53ef\u4fee\u590d ' + state.sessionRepairableVisibilityCount) : '')
+        + ((selectedDelete || selectedRepair) ? (' \u00b7 \u5df2\u9009 \u5220\u9664' + selectedDelete + '/\u4fee\u590d' + selectedRepair) : ''));
+  }
+  if ($('deleteSelectedSessionsBtn')) $('deleteSelectedSessionsBtn').disabled = selectedDelete <= 0 || state.sessionsLoading;
+  if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').disabled = selectedRepair <= 0 || state.sessionsLoading;
+}
+
+function renderSessionManager() {
+  const list = $('sessionList');
+  if (!list) return;
+  syncSessionControls();
+  if (state.sessionsLoading) {
+    list.innerHTML = '<div class="empty-state">\u6b63\u5728\u52a0\u8f7d\u4f1a\u8bdd\u5143\u4fe1\u606f...</div>';
+    return;
+  }
+  if (!state.sessionsLoaded) {
+    list.innerHTML = '<div class="empty-state">\u70b9\u51fb\u201c\u5237\u65b0\u201d\u52a0\u8f7d\u4f1a\u8bdd\u5143\u4fe1\u606f\u3002</div>';
+    return;
+  }
+  if (!state.sessions.length) {
+    list.innerHTML = '<div class="empty-state">\u6ca1\u6709\u627e\u5230\u7b26\u5408\u6761\u4ef6\u7684\u4f1a\u8bdd\u3002</div>';
+    return;
+  }
+  list.innerHTML = state.sessions.map(function(item) {
+    const canDelete = Boolean(item.archived);
+    const canRepair = Boolean(item.canRepairVisibility);
+    const actionable = canDelete || canRepair;
+    const checked = state.selectedSessionIds.has(item.id);
+    const providerText = item.effectiveModelProvider || item.modelProvider || item.fileModelProvider || 'openai';
+    const meta = [
+      '<span class="stats-pill">' + escapeHtml(item.archived ? '\u5df2\u5f52\u6863' : '\u672a\u5f52\u6863') + '</span>',
+      item.updatedAt ? '<span class="stats-pill">\u66f4\u65b0 ' + escapeHtml(formatShortDate(item.updatedAt)) + '</span>' : '',
+      '<span class="stats-pill">provider=' + escapeHtml(providerText) + '</span>',
+      item.currentModelProvider ? '<span class="stats-pill">\u5f53\u524d=' + escapeHtml(item.currentModelProvider) + '</span>' : '',
+      item.providerMismatch ? '<span class="stats-pill">provider \u4e0d\u5339\u914d</span>' : '',
+      item.fileProviderMismatch ? '<span class="stats-pill">rollout \u4e0d\u5339\u914d</span>' : '',
+      item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
+      item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
+    ].filter(Boolean);
+    const sub = [
+      item.project ? ('project=' + item.project) : '',
+      item.cwd ? ('cwd=' + item.cwd) : '',
+      item.fileRelativePath ? ('file=' + item.fileRelativePath) : '',
+      item.shortId ? ('id=' + item.shortId) : '',
+    ].filter(Boolean);
+    const pillText = canDelete ? '\u53ef\u5220\u9664' : (canRepair ? '\u53ef\u4fee\u590d' : sessionVisibilityLabel(item));
+    const pillClass = (canDelete || canRepair || item.visibleInCurrentProvider) ? '' : 'fail';
+    return '<label class="session-row ' + (actionable ? '' : 'disabled') + '">' +
+      '<input type="checkbox" data-session-select value="' + escapeHtml(item.id) + '"' + (checked ? ' checked' : '') + (actionable ? '' : ' disabled') + '>' +
+      '<div class="session-main">' +
+        '<div class="session-title" title="' + escapeHtml(item.title || '') + '">' + escapeHtml(item.title || '\u672a\u547d\u540d\u4f1a\u8bdd') + '</div>' +
+        '<div class="session-meta">' + meta.join('') + '</div>' +
+        '<div class="session-sub">' + escapeHtml(sub.join(' \u00b7 ') || '\u65e0\u6587\u4ef6\u5143\u4fe1\u606f') + '</div>' +
+      '</div>' +
+      '<span class="result-pill ' + pillClass + '">' + escapeHtml(pillText) + '</span>' +
+    '</label>';
+  }).join('');
+}
+
+async function loadSessions() {
+  state.sessionsLoading = true;
+  renderSessionManager();
+  try {
+    const archivedOnly = $('sessionArchivedOnly') ? $('sessionArchivedOnly').checked : state.sessionsArchivedOnly;
+    state.sessionsArchivedOnly = archivedOnly;
+    const res = await fetch('/_admin/sessions?archived=' + (archivedOnly ? '1' : '0') + '&_=' + Date.now(), { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || '\u52a0\u8f7d\u4f1a\u8bdd\u5931\u8d25');
+    state.sessions = Array.isArray(data.sessions) ? data.sessions : [];
+    state.sessionsCurrentProvider = data.currentModelProvider || null;
+    state.sessionProviderMismatchCount = Number(data.providerMismatchCount || 0);
+    state.sessionRepairableVisibilityCount = Number(data.repairableVisibilityCount || 0);
+    state.sessionsLoaded = true;
+    const ids = new Set(state.sessions.map(function(item) { return item.id; }));
+    Array.from(state.selectedSessionIds).forEach(function(id) {
+      if (!ids.has(id)) state.selectedSessionIds.delete(id);
+    });
+    if ($('sessionManagerHint')) {
+      const provider = state.sessionsCurrentProvider || 'openai';
+      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\u3002\u8fd9\u91cc\u53ea\u663e\u793a\u6807\u9898\u3001\u5de5\u4f5c\u533a\u3001\u66f4\u65b0\u65f6\u95f4\u3001\u5f52\u6863\u72b6\u6001\u3001provider \u548c\u6587\u4ef6\u4f4d\u7f6e\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
+    }
+    renderSessionManager();
+  } catch (err) {
+    state.sessionsLoaded = true;
+    if ($('sessionManagerHint')) $('sessionManagerHint').textContent = String(err.message || err);
+    if ($('sessionManagerStatus')) $('sessionManagerStatus').textContent = '\u52a0\u8f7d\u5931\u8d25';
+    setOutput(String(err.message || err));
+  } finally {
+    state.sessionsLoading = false;
+    renderSessionManager();
+  }
+}
+
+function selectAllDeletableSessions() {
+  (state.sessions || []).forEach(function(item) {
+    if (item.archived) state.selectedSessionIds.add(item.id);
+  });
+  renderSessionManager();
+}
+
+function selectAllRepairableSessions() {
+  (state.sessions || []).forEach(function(item) {
+    if (item.canRepairVisibility) state.selectedSessionIds.add(item.id);
+  });
+  renderSessionManager();
+}
+
+function clearSessionSelection() {
+  state.selectedSessionIds.clear();
+  renderSessionManager();
+}
+
+async function repairSelectedSessionsVisibility() {
+  const selected = selectedRepairableSessions();
+  if (!selected.length) return toast('\u8bf7\u5148\u9009\u62e9\u53ef\u4fee\u590d\u53ef\u89c1\u6027\u7684\u4f1a\u8bdd');
+  const provider = state.sessionsCurrentProvider || '\u5f53\u524d provider';
+  const confirmMessage = '\u786e\u5b9a\u628a\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u540c\u6b65\u5230 ' + provider + ' \u5417\uff1f'
+    + String.fromCharCode(10, 10)
+    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\uff0c\u518d\u53ea\u4fee\u6539 provider \u5143\u4fe1\u606f\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+  if (!confirm(confirmMessage)) return;
+  const res = await fetch('/_admin/sessions/repair-visibility', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionIds: selected.map(function(item) { return item.id; }) }),
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok || data.ok === false) {
+    toast(data.error || '\u4fee\u590d\u53ef\u89c1\u6027\u5931\u8d25');
+    return;
+  }
+  toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u53ef\u89c1\u6027');
+  state.selectedSessionIds.clear();
+  await loadSessions();
+}
+
+async function deleteSelectedSessions() {
+  const selected = selectedArchivedSessions();
+  if (!selected.length) return toast('\u8bf7\u5148\u9009\u62e9\u5df2\u5f52\u6863\u4f1a\u8bdd');
+  const confirmMessage = '\u786e\u5b9a\u5220\u9664\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u5f52\u6863\u4f1a\u8bdd\u5417\uff1f'
+    + String.fromCharCode(10, 10)
+    + '\u4f1a\u5148\u5907\u4efd\u72b6\u6001\u6570\u636e\u5e93\u3001\u7d22\u5f15\u548c\u4f1a\u8bdd\u6587\u4ef6\uff0c\u518d\u4ece Codex \u4f1a\u8bdd\u5217\u8868\u4e2d\u79fb\u9664\u3002\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+  if (!confirm(confirmMessage)) return;
+  const res = await fetch('/_admin/sessions/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sessionIds: selected.map(function(item) { return item.id; }) }),
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok || data.ok === false) {
+    toast(data.error || '\u5220\u9664\u4f1a\u8bdd\u5931\u8d25');
+    return;
+  }
+  toast('\u5df2\u5220\u9664 ' + data.deletedCount + ' \u4e2a\u5f52\u6863\u4f1a\u8bdd');
+  state.selectedSessionIds.clear();
+  await loadSessions();
+}
+
+function selectedKillableNodeProcesses() {
+  return (state.nodeProcesses || []).filter(function(item) {
+    return item.killable && state.selectedNodeProcessIds.has(String(item.pid));
+  });
+}
+
+function nodeProcessCategoryLabel(item) {
+  if (item.killable) return '可清理';
+  if (item.protected) return '已保护';
+  return '仅查看';
+}
+
+function syncProcessCleanupControls() {
+  const selected = selectedKillableNodeProcesses();
+  const summary = state.nodeProcessSummary || {};
+  if ($('processCleanupStatus')) {
+    $('processCleanupStatus').textContent = state.nodeProcessesLoading
+      ? '扫描中'
+      : ('Node ' + (summary.count || 0) + ' 个 · 可清理 ' + (summary.killableCount || 0) + ' 个'
+        + (selected.length ? (' · 已选 ' + selected.length) : ''));
+  }
+  if ($('killSelectedProcessesBtn')) $('killSelectedProcessesBtn').disabled = selected.length <= 0 || state.nodeProcessesLoading;
+}
+
+function renderProcessCleanup() {
+  const list = $('processCleanupList');
+  if (!list) return;
+  syncProcessCleanupControls();
+  if (state.nodeProcessesLoading) {
+    list.innerHTML = '<div class="empty-state">正在扫描 Node / MCP 进程...</div>';
+    return;
+  }
+  if (!state.nodeProcessesLoaded) {
+    list.innerHTML = '<div class="empty-state">点击“扫描”查看疑似 MCP / Node 进程。</div>';
+    return;
+  }
+  if (!state.nodeProcesses.length) {
+    list.innerHTML = '<div class="empty-state">当前没有发现 Node / MCP 进程。</div>';
+    return;
+  }
+  list.innerHTML = state.nodeProcesses.map(function(item) {
+    const checked = state.selectedNodeProcessIds.has(String(item.pid));
+    const matches = Array.isArray(item.mcpMatches) && item.mcpMatches.length
+      ? item.mcpMatches.join(', ')
+      : 'no-mcp-pattern';
+    const reasons = Array.isArray(item.reasons) && item.reasons.length
+      ? item.reasons.join(', ')
+      : '';
+    const meta = [
+      '<span class="stats-pill">PID ' + escapeHtml(item.pid) + '</span>',
+      item.parentPid ? '<span class="stats-pill">PPID ' + escapeHtml(item.parentPid) + '</span>' : '',
+      '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.memoryBytes || 0)) + '</span>',
+      '<span class="stats-pill">' + escapeHtml(item.category || 'node') + '</span>',
+      '<span class="stats-pill">match=' + escapeHtml(matches) + '</span>',
+    ].filter(Boolean);
+    const sub = [
+      item.commandPreview || item.executableName || item.name || '',
+      reasons ? ('reason=' + reasons) : '',
+    ].filter(Boolean);
+    return '<label class="session-row ' + (item.killable ? '' : 'disabled') + '">' +
+      '<input type="checkbox" data-node-process-select value="' + escapeHtml(item.pid) + '"' + (checked ? ' checked' : '') + (item.killable ? '' : ' disabled') + '>' +
+      '<div class="session-main">' +
+        '<div class="session-title" title="' + escapeHtml(item.commandPreview || item.name || '') + '">' + escapeHtml(item.name || 'node') + ' · ' + escapeHtml(nodeProcessCategoryLabel(item)) + '</div>' +
+        '<div class="session-meta">' + meta.join('') + '</div>' +
+        '<div class="session-sub">' + escapeHtml(sub.join(' · ') || '无命令行信息') + '</div>' +
+      '</div>' +
+      '<span class="result-pill ' + (item.killable ? '' : 'fail') + '">' + escapeHtml(nodeProcessCategoryLabel(item)) + '</span>' +
+    '</label>';
+  }).join('');
+}
+
+async function loadProcessCleanup() {
+  state.nodeProcessesLoading = true;
+  renderProcessCleanup();
+  try {
+    const res = await fetch('/_admin/process-cleanup?_=' + Date.now(), { cache: 'no-store' });
+    const data = await res.json();
+    if (!res.ok || data.ok === false) throw new Error(data.error || '扫描进程失败');
+    state.nodeProcesses = Array.isArray(data.processes) ? data.processes : [];
+    state.nodeProcessesLoaded = true;
+    state.nodeProcessSummary = data;
+    const ids = new Set(state.nodeProcesses.map(function(item) { return String(item.pid); }));
+    Array.from(state.selectedNodeProcessIds).forEach(function(pid) {
+      if (!ids.has(pid)) state.selectedNodeProcessIds.delete(pid);
+    });
+    if ($('processCleanupHint')) {
+      $('processCleanupHint').textContent = '已扫描 ' + data.count + ' 个 Node 进程，可清理 ' + data.killableCount + ' 个；总内存约 ' + data.totalMemoryMb + ' MB，可清理约 ' + data.killableMemoryMb + ' MB。当前 Gateway 和本仓库相关 Node 进程已保护。';
+    }
+    renderProcessCleanup();
+  } catch (err) {
+    state.nodeProcessesLoaded = true;
+    if ($('processCleanupHint')) $('processCleanupHint').textContent = String(err.message || err);
+    if ($('processCleanupStatus')) $('processCleanupStatus').textContent = '扫描失败';
+    setOutput(String(err.message || err));
+  } finally {
+    state.nodeProcessesLoading = false;
+    renderProcessCleanup();
+  }
+}
+
+function selectAllKillableNodeProcesses() {
+  (state.nodeProcesses || []).forEach(function(item) {
+    if (item.killable) state.selectedNodeProcessIds.add(String(item.pid));
+  });
+  renderProcessCleanup();
+}
+
+function clearNodeProcessSelection() {
+  state.selectedNodeProcessIds.clear();
+  renderProcessCleanup();
+}
+
+async function killSelectedNodeProcesses() {
+  const selected = selectedKillableNodeProcesses();
+  if (!selected.length) return toast('请先选择可清理的 MCP / Node 进程');
+  const memoryMb = selected.reduce(function(sum, item) { return sum + Number(item.memoryMb || 0); }, 0);
+  const confirmMessage = '确定终止选中的 ' + selected.length + ' 个 MCP / Node 进程吗？'
+    + String.fromCharCode(10, 10)
+    + '预计释放约 ' + Math.round(memoryMb * 10) / 10 + ' MB。只会按 PID 终止已识别为可清理的进程，不会执行全局 taskkill /IM node.exe。';
+  if (!confirm(confirmMessage)) return;
+  const res = await fetch('/_admin/process-cleanup/kill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      confirmed: true,
+      pids: selected.map(function(item) { return item.pid; }),
+    }),
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok || data.ok === false) {
+    toast(data.error || '终止进程失败');
+    return;
+  }
+  toast('已终止 ' + data.killedCount + ' 个进程');
+  state.selectedNodeProcessIds.clear();
+  await loadProcessCleanup();
+}
+
 async function clearApiStats() {
   if (!confirm('确定清除 API 服务统计？不会删除账号或请求日志以外的配置。')) return;
   const res = await fetch('/_admin/local-access/stats/clear', { method: 'POST' });
@@ -5859,6 +6344,12 @@ function setActiveTab(name) {
   } else if (name === 'codexapp') {
     renderCodexAppState();
     renderCodexAppAccounts();
+  } else if (name === 'sessions') {
+    renderSessionManager();
+    if (!state.sessionsLoaded && !state.sessionsLoading) loadSessions();
+  } else if (name === 'processes') {
+    renderProcessCleanup();
+    if (!state.nodeProcessesLoaded && !state.nodeProcessesLoading) loadProcessCleanup();
   }
 }
 
@@ -7020,6 +7511,21 @@ document.addEventListener('change', function(event) {
     else state.apiModalIds.delete(event.target.value);
     renderApiPoolAccounts();
   }
+  if (event.target && event.target.matches && event.target.matches('[data-session-select]')) {
+    if (event.target.checked) state.selectedSessionIds.add(event.target.value);
+    else state.selectedSessionIds.delete(event.target.value);
+    syncSessionControls();
+  }
+  if (event.target && event.target.matches && event.target.matches('[data-node-process-select]')) {
+    if (event.target.checked) state.selectedNodeProcessIds.add(event.target.value);
+    else state.selectedNodeProcessIds.delete(event.target.value);
+    syncProcessCleanupControls();
+  }
+  if (event.target && event.target.id === 'sessionArchivedOnly') {
+    state.sessionsArchivedOnly = event.target.checked;
+    state.selectedSessionIds.clear();
+    loadSessions();
+  }
   if (event.target && event.target.id === 'apiRestrictFreeAccounts') {
     state.apiRestrictFreeAccounts = event.target.checked;
     if (state.apiRestrictFreeAccounts) {
@@ -7120,6 +7626,16 @@ $('apiHealthCheckBtn').onclick = runApiHealthCheck;
 $('apiStatsRefreshBtn').onclick = function() { loadState().then(function() { renderApiStatsPanel(); toast('统计已刷新'); }); };
 $('apiStatsClearBtn').onclick = clearApiStats;
 $('activateApiServiceBtn').onclick = activateApiServiceForCodexApp;
+if ($('refreshSessionsBtn')) $('refreshSessionsBtn').onclick = loadSessions;
+if ($('selectAllSessionsBtn')) $('selectAllSessionsBtn').onclick = selectAllDeletableSessions;
+if ($('selectRepairableSessionsBtn')) $('selectRepairableSessionsBtn').onclick = selectAllRepairableSessions;
+if ($('clearSessionSelectionBtn')) $('clearSessionSelectionBtn').onclick = clearSessionSelection;
+if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').onclick = repairSelectedSessionsVisibility;
+if ($('deleteSelectedSessionsBtn')) $('deleteSelectedSessionsBtn').onclick = deleteSelectedSessions;
+if ($('refreshProcessCleanupBtn')) $('refreshProcessCleanupBtn').onclick = loadProcessCleanup;
+if ($('selectKillableProcessesBtn')) $('selectKillableProcessesBtn').onclick = selectAllKillableNodeProcesses;
+if ($('clearProcessSelectionBtn')) $('clearProcessSelectionBtn').onclick = clearNodeProcessSelection;
+if ($('killSelectedProcessesBtn')) $('killSelectedProcessesBtn').onclick = killSelectedNodeProcesses;
 $('saveApiPoolBtn').onclick = function() { saveApiPool().then(closeApiPoolModal).catch(function(err) { setOutput(String(err)); }); };
 $('apiPoolSelectAllBtn').onclick = function() {
   sortedAccounts().forEach(function(account) {
@@ -7181,7 +7697,13 @@ bindAccountCardLightFollow();
 
 loadState()
   .then(function() {
-    setActiveTab(location.hash === '#wakeup' ? 'wakeup' : (location.hash === '#codexapp' ? 'codexapp' : 'overview'));
+    setActiveTab(location.hash === '#wakeup'
+      ? 'wakeup'
+      : (location.hash === '#codexapp'
+        ? 'codexapp'
+        : (location.hash === '#sessions'
+          ? 'sessions'
+          : (location.hash === '#processes' ? 'processes' : 'overview'))));
   })
   .catch(function(err) { setOutput(String(err)); });
 </script>
