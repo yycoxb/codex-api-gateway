@@ -1565,7 +1565,16 @@ async function handleUseAccount(req, res) {
 async function handleDeleteAccount(req, res, u) {
   const accountId = u.searchParams.get('accountId');
   if (!accountId) return jsonResponse(res, 400, { error: 'missing accountId' });
-  return jsonResponse(res, 200, { ok: true, ...(await deleteAccount(accountId)) });
+  const result = await deleteAccount(accountId);
+  const localAccess = await loadLocalAccessConfig();
+  const accountIds = (localAccess.accountIds || []).filter((id) => id !== accountId);
+  const customRoutingRules = (localAccess.customRoutingRules || []).filter((rule) => rule.accountId !== accountId);
+  const localAccessChanged = accountIds.length !== (localAccess.accountIds || []).length
+    || customRoutingRules.length !== (localAccess.customRoutingRules || []).length;
+  const nextLocalAccess = localAccessChanged
+    ? await saveLocalAccessConfig({ ...localAccess, accountIds, customRoutingRules })
+    : localAccess;
+  return jsonResponse(res, 200, { ok: true, ...result, localAccess: nextLocalAccess });
 }
 
 async function handleWakeup(req, res) {

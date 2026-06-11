@@ -811,7 +811,8 @@ function normalizeStore(raw) {
   return { version: 1, currentAccountId: null, accounts: [] };
 }
 
-async function migrateLegacyAccountIfNeeded(store) {
+async function migrateLegacyAccountIfNeeded(store, allowLegacyMigration) {
+  if (!allowLegacyMigration) return store;
   if (store.accounts.length > 0) return store;
   const legacy = await readJson(ACCOUNT_PATH, null);
   if (!legacy?.tokens?.access_token || !legacy?.tokens?.id_token) return store;
@@ -833,8 +834,10 @@ async function migrateLegacyAccountIfNeeded(store) {
 }
 
 export async function loadAccountStore() {
-  const store = normalizeStore(await readJson(ACCOUNTS_PATH, null));
-  return await migrateLegacyAccountIfNeeded(store);
+  const missing = Symbol('missing-account-store');
+  const raw = await readJson(ACCOUNTS_PATH, missing);
+  const store = normalizeStore(raw === missing ? null : raw);
+  return await migrateLegacyAccountIfNeeded(store, raw === missing);
 }
 
 export async function saveAccountStore(store) {

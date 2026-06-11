@@ -6777,8 +6777,9 @@ async function refreshRuntimeState() {
   }
 }
 
-async function loadState() {
-  if (state.loadingState) return;
+async function loadState(options) {
+  const force = options === true || Boolean(options && options.force);
+  if (state.loadingState && !force) return;
   state.loadingState = true;
   try {
   const res = await fetch('/_admin/state?_=' + Date.now(), { cache: 'no-store' });
@@ -7309,8 +7310,31 @@ async function useAccount(accountId) {
 async function deleteAccount(accountId) {
   if (!confirm('确定删除这个账号？')) return;
   const res = await fetch('/_admin/account?accountId=' + encodeURIComponent(accountId), { method: 'DELETE' });
-  setOutput(await res.json());
-  await loadState();
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok || data.error) return toast(data.error || '删除账号失败');
+  if (state.data && Array.isArray(state.data.accounts)) {
+    state.data.accounts = state.data.accounts.filter(function(account) { return account.id !== accountId; });
+    state.data.currentAccountId = data.currentAccountId || null;
+    if (data.localAccess) state.data.localAccess = data.localAccess;
+    if (state.data.localAccess && Array.isArray(state.data.localAccess.accountIds)) {
+      state.data.localAccess.accountIds = state.data.localAccess.accountIds.filter(function(id) { return id !== accountId; });
+    }
+    state.selectedWakeupIds.delete(accountId);
+    state.apiAccountIds.delete(accountId);
+    state.apiModalIds.delete(accountId);
+    state.apiCustomRules = (state.apiCustomRules || []).filter(function(rule) { return rule.accountId !== accountId; });
+    normalizeAccountOrder();
+    renderLocalAccessMembers();
+    renderAccounts();
+    renderApiPoolAccounts();
+    renderWakeupAccounts();
+    renderWakeupStats();
+    renderCodexAppAccounts();
+    syncSelectionControls();
+    syncApiSelectionControls();
+  }
+  await loadState({ force: true });
 }
 
 async function runWakeup(accountIds) {
