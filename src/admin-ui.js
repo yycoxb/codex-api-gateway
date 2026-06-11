@@ -6777,9 +6777,8 @@ async function refreshRuntimeState() {
   }
 }
 
-async function loadState(options) {
-  const force = options === true || Boolean(options && options.force);
-  if (state.loadingState && !force) return;
+async function loadState() {
+  if (state.loadingState) return;
   state.loadingState = true;
   try {
   const res = await fetch('/_admin/state?_=' + Date.now(), { cache: 'no-store' });
@@ -7308,42 +7307,10 @@ async function useAccount(accountId) {
 }
 
 async function deleteAccount(accountId) {
-  if (!confirm('\u786e\u5b9a\u5220\u9664\u8fd9\u4e2a\u8d26\u53f7\u5417\uff1f\n\n\u5220\u9664\u540e Gateway \u4e0d\u4f1a\u518d\u4ece Codex App \u5f53\u524d\u767b\u5f55\u81ea\u52a8\u628a\u5b83\u52a0\u56de\u6765\uff1b\u5982\u9700\u6062\u590d\uff0c\u53ef\u624b\u52a8\u91cd\u65b0\u5bfc\u5165\u3002')) return;
+  if (!confirm('确定删除这个账号？')) return;
   const res = await fetch('/_admin/account?accountId=' + encodeURIComponent(accountId), { method: 'DELETE' });
-  const data = await res.json();
-  setOutput(data);
-  if (!res.ok || data.ok === false) {
-    toast(data.error || '\u5220\u9664\u8d26\u53f7\u5931\u8d25');
-    await loadState({ force: true });
-    return;
-  }
-  if (state.data && Array.isArray(state.data.accounts)) {
-    state.data.accounts = state.data.accounts.filter(function(account) { return account.id !== accountId; });
-    state.data.currentAccountId = data.currentAccountId || null;
-    if (state.data.localAccess && Array.isArray(state.data.localAccess.accountIds)) {
-      state.data.localAccess.accountIds = state.data.localAccess.accountIds.filter(function(id) { return id !== accountId; });
-    }
-    if (state.data.localAccess && Array.isArray(state.data.localAccess.customRoutingRules)) {
-      state.data.localAccess.customRoutingRules = state.data.localAccess.customRoutingRules.filter(function(rule) { return rule.accountId !== accountId; });
-    }
-  }
-  state.selectedWakeupIds.delete(accountId);
-  state.apiAccountIds.delete(accountId);
-  state.apiModalIds.delete(accountId);
-  state.accountOrder = (state.accountOrder || []).filter(function(id) { return id !== accountId; });
-  saveAccountOrder();
-  normalizeAccountOrder();
-  renderLocalAccessMembers();
-  renderLocalAccessRuntime();
-  renderAccounts();
-  renderApiPoolAccounts();
-  renderWakeupAccounts();
-  renderWakeupStats();
-  renderCodexAppAccounts();
-  syncSelectionControls();
-  syncApiSelectionControls();
-  toast('\u8d26\u53f7\u5df2\u5220\u9664');
-  await loadState({ force: true });
+  setOutput(await res.json());
+  await loadState();
 }
 
 async function runWakeup(accountIds) {

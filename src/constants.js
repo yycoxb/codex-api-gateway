@@ -5,7 +5,6 @@ export const APP_DIR = path.join(os.homedir(), '.codex-api-gateway');
 export const CONFIG_PATH = path.join(APP_DIR, 'config.json');
 export const ACCOUNT_PATH = path.join(APP_DIR, 'account.json');
 export const ACCOUNTS_PATH = path.join(APP_DIR, 'accounts.json');
-export const DELETED_ACCOUNTS_PATH = path.join(APP_DIR, 'deleted-accounts.json');
 export const WAKEUP_HISTORY_PATH = path.join(APP_DIR, 'wakeup-history.json');
 export const WAKEUP_SCHEDULE_PATH = path.join(APP_DIR, 'wakeup-schedule.json');
 export const QUOTA_REFRESH_SCHEDULE_PATH = path.join(APP_DIR, 'quota-refresh-schedule.json');
