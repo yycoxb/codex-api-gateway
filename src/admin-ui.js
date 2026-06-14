@@ -5832,7 +5832,7 @@ function selectedRepairableSessions() {
 
 function sessionVisibilityLabel(item) {
   if (item.archived) return '\u5df2\u5f52\u6863';
-  if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
+  if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch || item.sqliteMissing) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
   return '\u5f53\u524d\u6a21\u5f0f\u53ef\u89c1';
 }
 
@@ -5887,6 +5887,7 @@ function renderSessionManager() {
       item.indexArchivedMismatch ? '<span class="stats-pill">index \u5df2\u5f52\u6863</span>' : '',
       item.indexCwdMissing ? '<span class="stats-pill">index cwd \u7f3a\u5931</span>' : '',
       item.indexCwdMismatch ? '<span class="stats-pill">index cwd \u4e0d\u5339\u914d</span>' : '',
+      item.sqliteMissing ? '<span class="stats-pill">sqlite \u7f3a\u5931</span>' : '',
       item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
       item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
     ].filter(Boolean);
@@ -5969,7 +5970,7 @@ async function repairSelectedSessionsVisibility() {
   const provider = state.sessionsCurrentProvider || '\u5f53\u524d provider';
   const confirmMessage = '\u786e\u5b9a\u628a\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u540c\u6b65\u5230 ' + provider + ' \u5417\uff1f'
     + String.fromCharCode(10, 10)
-    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\uff0c\u518d\u53ea\u4fee\u6539 provider \u5143\u4fe1\u606f\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u4fee\u6539 provider/index/cwd \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
   if (!confirm(confirmMessage)) return;
   const res = await fetch('/_admin/sessions/repair-visibility', {
     method: 'POST',
