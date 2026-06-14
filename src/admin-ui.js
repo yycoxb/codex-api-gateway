@@ -5967,7 +5967,10 @@ async function repairSelectedSessionsVisibility() {
   const res = await fetch('/_admin/sessions/repair-visibility', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sessionIds: selected.map(function(item) { return item.id; }) }),
+    body: JSON.stringify({
+      sessionIds: selected.map(function(item) { return item.id; }),
+      targetProvider: state.sessionsCurrentProvider || null,
+    }),
   });
   const data = await res.json();
   setOutput(data);
