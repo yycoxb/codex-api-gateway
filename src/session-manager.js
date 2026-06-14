@@ -47,6 +47,10 @@ function normalizePathText(value, max = 220) {
   return normalizeText(value, max)?.replace(/^\\\\\?\\/, '') || null;
 }
 
+function comparablePath(value) {
+  return normalizePathText(value, 300)?.toLowerCase() || null;
+}
+
 function escapeRegExp(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -200,6 +204,23 @@ function sourceFromMeta(parsed) {
   return normalizeText(payload.source || payload.thread_source || parsed?.source || parsed?.thread_source, 80);
 }
 
+function cwdFromMeta(parsed) {
+  const payload = parsed?.payload && typeof parsed.payload === 'object' ? parsed.payload : {};
+  return normalizePathText(payload.cwd || payload.workspace || payload.workspace_path || parsed?.cwd || parsed?.workspace || parsed?.workspace_path, 220);
+}
+
+function indexModelProvider(parsed) {
+  return normalizeText(parsed?.model_provider || parsed?.modelProvider || parsed?.provider, 80);
+}
+
+function indexArchivedValue(parsed) {
+  const value = parsed?.archived ?? parsed?.is_archived ?? parsed?.isArchived;
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') return /^(1|true|yes)$/i.test(value.trim());
+  return false;
+}
+
 async function readSessionIndex(dataDir) {
   const indexPath = path.join(dataDir, SESSION_INDEX_FILE);
   if (!(await exists(indexPath))) return new Map();
@@ -214,6 +235,10 @@ async function readSessionIndex(dataDir) {
       map.set(id, {
         title: normalizeText(parsed.thread_name || parsed.title || parsed.name, 120),
         updatedAt: timestampMs(parsed, 'updated') || timestampMs(parsed, 'last_updated') || null,
+        modelProvider: indexModelProvider(parsed),
+        archived: indexArchivedValue(parsed),
+        cwd: normalizePathText(parsed.cwd || parsed.workspace || parsed.workspace_path, 220),
+        source: normalizeText(parsed.source || parsed.thread_source, 80),
       });
     } catch {
       // Ignore malformed index rows; never expose raw content.
@@ -242,6 +267,7 @@ async function collectSessionFiles(dataDir) {
         title: titleFromMeta(parsed),
         modelProvider: modelProviderFromMeta(parsed),
         source: sourceFromMeta(parsed),
+        cwd: cwdFromMeta(parsed),
         absolutePath: file,
         relativePath: path.relative(dataDir, file),
         location: dirName,
@@ -290,21 +316,36 @@ function decorateVisibility(item, currentModelProvider) {
   const provider = effectiveProvider(item);
   const providerMismatch = Boolean(currentModelProvider && provider && provider !== currentModelProvider);
   const fileProviderMismatch = Boolean(currentModelProvider && item.fileModelProvider && item.fileModelProvider !== currentModelProvider);
+  const indexProviderMismatch = Boolean(currentModelProvider && item.indexModelProvider && item.indexModelProvider !== currentModelProvider);
+  const indexProviderMissing = Boolean(item.indexRowExists && !item.indexModelProvider);
+  const indexMissing = Boolean(item.threadRowExists && !item.indexRowExists);
   const archived = Boolean(item.archived);
+  const indexArchivedMismatch = Boolean(!archived && item.indexArchived);
+  const expectedCwd = comparablePath(item.cwd);
+  const indexedCwd = comparablePath(item.indexCwd);
+  const indexCwdMissing = Boolean(item.threadRowExists && item.indexRowExists && expectedCwd && !indexedCwd);
+  const indexCwdMismatch = Boolean(item.threadRowExists && item.indexRowExists && expectedCwd && indexedCwd && expectedCwd !== indexedCwd);
+  const visibilityMismatch = providerMismatch || fileProviderMismatch || indexProviderMismatch || indexProviderMissing || indexMissing || indexArchivedMismatch || indexCwdMissing || indexCwdMismatch;
   return {
     ...item,
     effectiveModelProvider: provider,
     currentModelProvider,
     providerMismatch,
     fileProviderMismatch,
-    visibleInCurrentProvider: Boolean(!archived && !providerMismatch),
-    canRepairVisibility: Boolean(!archived && item.threadRowExists && (providerMismatch || fileProviderMismatch)),
-    visibilityStatus: archived ? 'archived' : ((providerMismatch || fileProviderMismatch) ? 'provider_mismatch' : 'visible'),
+    indexProviderMismatch,
+    indexProviderMissing,
+    indexMissing,
+    indexArchivedMismatch,
+    indexCwdMissing,
+    indexCwdMismatch,
+    visibleInCurrentProvider: Boolean(!archived && !visibilityMismatch),
+    canRepairVisibility: Boolean(!archived && item.threadRowExists && visibilityMismatch),
+    visibilityStatus: archived ? 'archived' : (visibilityMismatch ? 'metadata_mismatch' : 'visible'),
   };
 }
 
 function sessionItemFromRow(row, file, indexItem = null) {
-  const cwd = normalizePathText(row?.cwd, 220);
+  const cwd = normalizePathText(row?.cwd, 220) || indexItem?.cwd || file?.cwd || null;
   const updatedAt = timestampMs(row, 'updated') || file?.mtimeMs || null;
   const createdAt = timestampMs(row, 'created') || null;
   const rowProvider = normalizeText(row.model_provider, 80);
@@ -314,10 +355,14 @@ function sessionItemFromRow(row, file, indexItem = null) {
     title: indexItem?.title || normalizeText(row.title, 120) || file?.title || '未命名会话',
     cwd,
     project: cwd ? normalizeText(path.basename(cwd), 80) : null,
-    source: normalizeText(row.source || row.thread_source, 60),
+    source: normalizeText(row.source || row.thread_source, 60) || indexItem?.source || file?.source || null,
     modelProvider: rowProvider,
     sqliteModelProvider: rowProvider,
     fileModelProvider: file?.modelProvider || null,
+    indexModelProvider: indexItem?.modelProvider || null,
+    indexCwd: indexItem?.cwd || null,
+    indexRowExists: Boolean(indexItem),
+    indexArchived: Boolean(indexItem?.archived),
     threadRowExists: true,
     archived: Boolean(Number(row.archived || 0) || file?.archivedByLocation),
     updatedAt,
@@ -331,16 +376,21 @@ function sessionItemFromRow(row, file, indexItem = null) {
 
 function sessionItemFromFile(file, indexItem = null) {
   const id = String(file.id || file.relativePath || '').trim();
+  const cwd = indexItem?.cwd || file.cwd || null;
   return {
     id,
     shortId: shortId(id),
     title: indexItem?.title || file.title || '未命名会话文件',
-    cwd: null,
-    project: null,
-    source: 'file',
+    cwd,
+    project: cwd ? normalizeText(path.basename(cwd), 80) : null,
+    source: indexItem?.source || file.source || 'file',
     modelProvider: file.modelProvider || null,
     sqliteModelProvider: null,
     fileModelProvider: file.modelProvider || null,
+    indexModelProvider: indexItem?.modelProvider || null,
+    indexCwd: indexItem?.cwd || null,
+    indexRowExists: Boolean(indexItem),
+    indexArchived: Boolean(indexItem?.archived),
     fileSource: file.source || null,
     threadRowExists: false,
     archived: Boolean(file.archivedByLocation),
@@ -577,6 +627,85 @@ async function repairRolloutProviders(filesById, ids, dataDir, backupDir, target
   return changes;
 }
 
+function setIndexProvider(row, targetProvider) {
+  row.model_provider = targetProvider;
+  if (Object.prototype.hasOwnProperty.call(row, 'modelProvider')) {
+    row.modelProvider = targetProvider;
+  }
+}
+
+function sessionIndexRowForItem(item, existing, targetProvider) {
+  const row = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+  row.id = item.id;
+  if (!normalizeText(row.thread_name || row.title || row.name, 120)) {
+    row.thread_name = item.title || item.shortId || item.id;
+  }
+  if (item.cwd) row.cwd = item.cwd;
+  if (item.source && !normalizeText(row.source || row.thread_source, 80)) row.source = item.source;
+  const updatedAt = Number(item.updatedAt || 0);
+  if (Number.isFinite(updatedAt) && updatedAt > 0) {
+    row.updated_at_ms = updatedAt;
+    row.updated_at = Math.floor(updatedAt / 1000);
+  }
+  row.archived = false;
+  if (Object.prototype.hasOwnProperty.call(row, 'is_archived')) row.is_archived = false;
+  if (Object.prototype.hasOwnProperty.call(row, 'isArchived')) row.isArchived = false;
+  setIndexProvider(row, targetProvider);
+  return row;
+}
+
+async function rewriteSessionIndexProviders(dataDir, selected, backupDir, targetProvider) {
+  const indexPath = path.join(dataDir, SESSION_INDEX_FILE);
+  const selectedById = new Map(selected.map((item) => [item.id, item]));
+  if (!selectedById.size) return { changed: false, updated: 0, inserted: 0 };
+
+  const latestById = new Map();
+  const kept = [];
+  let existingMatched = 0;
+  let content = '';
+  if (await exists(indexPath)) {
+    await copyIfExists(indexPath, path.join(backupDir, SESSION_INDEX_FILE));
+    content = await fs.readFile(indexPath, 'utf8');
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      kept.push(line);
+      continue;
+    }
+    const id = String(parsed?.id || '').trim();
+    if (id && selectedById.has(id)) {
+      latestById.set(id, parsed);
+      existingMatched += 1;
+      continue;
+    }
+    kept.push(line);
+  }
+
+  const appended = [];
+  let updated = 0;
+  let inserted = 0;
+  for (const item of selected) {
+    const existing = latestById.get(item.id) || null;
+    if (existing) updated += 1;
+    else inserted += 1;
+    appended.push(JSON.stringify(sessionIndexRowForItem(item, existing, targetProvider)));
+  }
+
+  const next = [...kept, ...appended].join('\n') + '\n';
+  await fs.writeFile(indexPath, next, 'utf8');
+  return {
+    changed: true,
+    updated,
+    inserted,
+    removedDuplicateRows: Math.max(0, existingMatched - updated),
+  };
+}
+
 export async function repairCodexSessionVisibility({ sessionIds = [], targetProvider = null } = {}) {
   const ids = [...new Set((Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
   if (!ids.length) {
@@ -611,7 +740,15 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     }
     const provider = effectiveProvider(item);
     const fileProviderMismatch = Boolean(item.fileModelProvider && item.fileModelProvider !== currentModelProvider);
-    if (provider === currentModelProvider && !fileProviderMismatch) {
+    const indexProviderMismatch = Boolean(item.indexModelProvider && item.indexModelProvider !== currentModelProvider);
+    const indexProviderMissing = Boolean(item.indexRowExists && !item.indexModelProvider);
+    const indexMissing = Boolean(!item.indexRowExists);
+    const indexArchivedMismatch = Boolean(item.indexArchived);
+    const expectedCwd = comparablePath(item.cwd);
+    const indexedCwd = comparablePath(item.indexCwd);
+    const indexCwdMissing = Boolean(item.indexRowExists && expectedCwd && !indexedCwd);
+    const indexCwdMismatch = Boolean(item.indexRowExists && expectedCwd && indexedCwd && expectedCwd !== indexedCwd);
+    if (provider === currentModelProvider && !fileProviderMismatch && !indexProviderMismatch && !indexProviderMissing && !indexMissing && !indexArchivedMismatch && !indexCwdMissing && !indexCwdMismatch) {
       rejected.push({ id: item.shortId || shortId(id), reason: 'already_visible' });
       continue;
     }
@@ -642,6 +779,7 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     updatedSqliteRows = updateSqliteProviders(dataDir, selectedIds, currentModelProvider);
   }
   const rolloutChanges = await repairRolloutProviders(filesById, selectedIds, dataDir, backupDir, currentModelProvider);
+  const sessionIndex = await rewriteSessionIndexProviders(dataDir, selected, backupDir, currentModelProvider);
 
   await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
     createdAt: new Date().toISOString(),
@@ -655,11 +793,17 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
       title: item.title,
       previousProvider: effectiveProvider(item),
       fileProvider: item.fileModelProvider || null,
+      indexProvider: item.indexModelProvider || null,
+      indexRowExists: Boolean(item.indexRowExists),
+      indexArchived: Boolean(item.indexArchived),
+      indexCwd: item.indexCwd || null,
+      cwd: item.cwd || null,
     })),
     rejected,
     sqliteBackups,
     updatedSqliteRows,
     updatedRolloutFileCount: rolloutChanges.length,
+    sessionIndex,
     note: 'Session visibility repair only updates provider metadata. Prompt/content/token bodies are not copied or exposed.',
   }, null, 2)}\n`, 'utf8');
 
@@ -671,6 +815,9 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     rejected,
     updatedSqliteRows,
     updatedRolloutFileCount: rolloutChanges.length,
+    updatedSessionIndexRows: sessionIndex.updated,
+    insertedSessionIndexRows: sessionIndex.inserted,
+    removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
   };
 }

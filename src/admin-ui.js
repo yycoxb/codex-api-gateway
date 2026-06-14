@@ -5832,7 +5832,7 @@ function selectedRepairableSessions() {
 
 function sessionVisibilityLabel(item) {
   if (item.archived) return '\u5df2\u5f52\u6863';
-  if (item.providerMismatch || item.fileProviderMismatch) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
+  if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
   return '\u5f53\u524d\u6a21\u5f0f\u53ef\u89c1';
 }
 
@@ -5880,6 +5880,13 @@ function renderSessionManager() {
       item.currentModelProvider ? '<span class="stats-pill">\u5f53\u524d=' + escapeHtml(item.currentModelProvider) + '</span>' : '',
       item.providerMismatch ? '<span class="stats-pill">provider \u4e0d\u5339\u914d</span>' : '',
       item.fileProviderMismatch ? '<span class="stats-pill">rollout \u4e0d\u5339\u914d</span>' : '',
+      item.indexModelProvider ? '<span class="stats-pill">index=' + escapeHtml(item.indexModelProvider) + '</span>' : '',
+      item.indexProviderMismatch ? '<span class="stats-pill">index \u4e0d\u5339\u914d</span>' : '',
+      item.indexProviderMissing ? '<span class="stats-pill">index provider \u7f3a\u5931</span>' : '',
+      item.indexMissing ? '<span class="stats-pill">index \u7f3a\u5931</span>' : '',
+      item.indexArchivedMismatch ? '<span class="stats-pill">index \u5df2\u5f52\u6863</span>' : '',
+      item.indexCwdMissing ? '<span class="stats-pill">index cwd \u7f3a\u5931</span>' : '',
+      item.indexCwdMismatch ? '<span class="stats-pill">index cwd \u4e0d\u5339\u914d</span>' : '',
       item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
       item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
     ].filter(Boolean);
