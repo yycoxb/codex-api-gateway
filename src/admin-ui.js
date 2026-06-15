@@ -4189,6 +4189,8 @@ const state = {
   sessionProviderMismatchCount: 0,
   sessionRepairableVisibilityCount: 0,
   sessionSidebarRefreshableCount: 0,
+  sessionSidebarVisibleCount: 0,
+  sessionChildThreadCount: 0,
   selectedSessionIds: new Set(),
   nodeProcesses: [],
   nodeProcessesLoaded: false,
@@ -5841,8 +5843,10 @@ function selectedSidebarSessions() {
 
 function sessionVisibilityLabel(item) {
   if (item.archived) return '\u5df2\u5f52\u6863';
+  if (item.isSubagentThread) return '\u5b50\u4f1a\u8bdd\uff0c\u4e0d\u5728\u4fa7\u680f';
   if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch || item.sqliteMissing || item.userEventMissing) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
-  return '\u5f53\u524d\u6a21\u5f0f\u53ef\u89c1';
+  if (item.sidebarVisibleInCurrentProvider) return '\u4fa7\u680f\u4e3b\u4f1a\u8bdd';
+  return '\u5143\u4fe1\u606f\u53ef\u89c1';
 }
 
 function syncSessionControls() {
@@ -5901,6 +5905,7 @@ function renderSessionManager() {
       item.indexCwdMismatch ? '<span class="stats-pill">index cwd \u4e0d\u5339\u914d</span>' : '',
       item.sqliteMissing ? '<span class="stats-pill">sqlite \u7f3a\u5931</span>' : '',
       item.userEventMissing ? '<span class="stats-pill">user event \u7f3a\u5931</span>' : '',
+      item.isSubagentThread ? '<span class="stats-pill">\u5b50\u4f1a\u8bdd/\u4e0d\u8fdb\u4fa7\u680f</span>' : '',
       item.canRefreshSidebar ? '<span class="stats-pill">\u53ef\u540c\u6b65\u4fa7\u680f</span>' : '',
       item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
       item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
@@ -5912,7 +5917,7 @@ function renderSessionManager() {
       item.shortId ? ('id=' + item.shortId) : '',
     ].filter(Boolean);
     const pillText = canDelete ? '\u53ef\u5220\u9664' : (canRepair ? '\u53ef\u4fee\u590d' : sessionVisibilityLabel(item));
-    const pillClass = (canDelete || canRepair || item.visibleInCurrentProvider) ? '' : 'fail';
+    const pillClass = (canDelete || canRepair || item.sidebarVisibleInCurrentProvider || item.isSubagentThread) ? '' : 'fail';
     return '<label class="session-row ' + (actionable ? '' : 'disabled') + '">' +
       '<input type="checkbox" data-session-select value="' + escapeHtml(item.id) + '"' + (checked ? ' checked' : '') + (actionable ? '' : ' disabled') + '>' +
       '<div class="session-main">' +
@@ -5939,6 +5944,8 @@ async function loadSessions() {
     state.sessionProviderMismatchCount = Number(data.providerMismatchCount || 0);
     state.sessionRepairableVisibilityCount = Number(data.repairableVisibilityCount || 0);
     state.sessionSidebarRefreshableCount = Number(data.sidebarRefreshableCount || 0);
+    state.sessionSidebarVisibleCount = Number(data.sidebarVisibleCount || 0);
+    state.sessionChildThreadCount = Number(data.childThreadCount || 0);
     state.sessionsLoaded = true;
     const ids = new Set(state.sessions.map(function(item) { return item.id; }));
     Array.from(state.selectedSessionIds).forEach(function(id) {
@@ -5946,7 +5953,7 @@ async function loadSessions() {
     });
     if ($('sessionManagerHint')) {
       const provider = state.sessionsCurrentProvider || 'openai';
-      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\uff1b\u53ef\u540c\u6b65\u4fa7\u680f ' + state.sessionSidebarRefreshableCount + ' \u4e2a\u3002\u8fd9\u91cc\u53ea\u663e\u793a\u6807\u9898\u3001\u5de5\u4f5c\u533a\u3001\u66f4\u65b0\u65f6\u95f4\u3001\u5f52\u6863\u72b6\u6001\u3001provider \u548c\u6587\u4ef6\u4f4d\u7f6e\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
+      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u4fa7\u680f\u4e3b\u4f1a\u8bdd ' + state.sessionSidebarVisibleCount + ' \u4e2a\uff1b\u5b50\u4f1a\u8bdd ' + state.sessionChildThreadCount + ' \u4e2a\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\uff1b\u53ef\u540c\u6b65\u4fa7\u680f ' + state.sessionSidebarRefreshableCount + ' \u4e2a\u3002\u5b50\u4f1a\u8bdd/subagent \u4e0d\u4f1a\u51fa\u73b0\u5728 Codex App \u5de6\u4fa7\u666e\u901a\u5bf9\u8bdd\u5217\u8868\u3002\u8fd9\u91cc\u4e0d\u5c55\u793a prompt/content/token\u3002';
     }
     renderSessionManager();
   } catch (err) {

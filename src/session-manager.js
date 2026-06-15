@@ -237,6 +237,11 @@ function isLikelyUserVisibleThread(item) {
   return candidates.some((value) => /^(user|vscode|cli)$/i.test(String(value || '').trim()));
 }
 
+function isSubagentThread(item) {
+  if (!item) return false;
+  return [item.threadSource, item.source, item.fileSource].filter(Boolean).some(sourceLooksSubagent);
+}
+
 function sourceFromMeta(parsed) {
   const payload = parsed?.payload && typeof parsed.payload === 'object' ? parsed.payload : {};
   return normalizeText(sourceScalar(payload.source) || sourceScalar(payload.thread_source) || sourceScalar(parsed?.source) || sourceScalar(parsed?.thread_source), 80);
@@ -368,6 +373,8 @@ function effectiveProvider(item) {
 
 function decorateVisibility(item, currentModelProvider) {
   const provider = effectiveProvider(item);
+  const likelyUserVisibleThread = isLikelyUserVisibleThread(item);
+  const subagentThread = isSubagentThread(item);
   const providerMismatch = Boolean(currentModelProvider && provider && provider !== currentModelProvider);
   const fileProviderMismatch = Boolean(currentModelProvider && item.fileModelProvider && item.fileModelProvider !== currentModelProvider);
   const indexProviderMismatch = Boolean(currentModelProvider && item.indexModelProvider && item.indexModelProvider !== currentModelProvider);
@@ -394,12 +401,14 @@ function decorateVisibility(item, currentModelProvider) {
     indexCwdMissing,
     indexCwdMismatch,
     sqliteMissing,
-    userEventMissing: Boolean(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent),
-    likelyUserVisibleThread: isLikelyUserVisibleThread(item),
-    canRefreshSidebar: Boolean(!archived && item.threadRowExists && isLikelyUserVisibleThread(item)),
-    visibleInCurrentProvider: Boolean(!archived && !visibilityMismatch && !(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent)),
-    canRepairVisibility: Boolean(!archived && (item.threadRowExists || (item.fileExists && isLikelyUserVisibleThread(item))) && (visibilityMismatch || (item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent))),
-    visibilityStatus: archived ? 'archived' : (visibilityMismatch ? 'metadata_mismatch' : 'visible'),
+    userEventMissing: Boolean(item.threadRowExists && likelyUserVisibleThread && !item.hasUserEvent),
+    isSubagentThread: subagentThread,
+    likelyUserVisibleThread,
+    canRefreshSidebar: Boolean(!archived && item.threadRowExists && likelyUserVisibleThread),
+    visibleInCurrentProvider: Boolean(!archived && !visibilityMismatch && !(item.threadRowExists && likelyUserVisibleThread && !item.hasUserEvent)),
+    sidebarVisibleInCurrentProvider: Boolean(!archived && likelyUserVisibleThread && !visibilityMismatch && !(item.threadRowExists && !item.hasUserEvent)),
+    canRepairVisibility: Boolean(!archived && likelyUserVisibleThread && (item.threadRowExists || item.fileExists) && (visibilityMismatch || (item.threadRowExists && !item.hasUserEvent))),
+    visibilityStatus: archived ? 'archived' : (subagentThread ? 'child_thread' : (visibilityMismatch ? 'metadata_mismatch' : 'visible')),
   };
 }
 
@@ -512,6 +521,8 @@ export async function listCodexSessions({ archivedOnly = true } = {}) {
     providerMismatchCount: items.filter((item) => item.providerMismatch).length,
     repairableVisibilityCount: items.filter((item) => item.canRepairVisibility).length,
     sidebarRefreshableCount: items.filter((item) => item.canRefreshSidebar).length,
+    sidebarVisibleCount: items.filter((item) => item.sidebarVisibleInCurrentProvider).length,
+    childThreadCount: items.filter((item) => item.isSubagentThread).length,
     sessions: items,
     startedAt,
     finishedAt: nowMs(),
@@ -1051,6 +1062,10 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     }
     if (item.archived) {
       rejected.push({ id: item.shortId || shortId(id), reason: 'archived' });
+      continue;
+    }
+    if (!isLikelyUserVisibleThread(item)) {
+      rejected.push({ id: item.shortId || shortId(id), reason: 'not_sidebar_main_thread' });
       continue;
     }
     const provider = effectiveProvider(item);
