@@ -396,6 +396,7 @@ function decorateVisibility(item, currentModelProvider) {
     sqliteMissing,
     userEventMissing: Boolean(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent),
     likelyUserVisibleThread: isLikelyUserVisibleThread(item),
+    canRefreshSidebar: Boolean(!archived && item.threadRowExists && isLikelyUserVisibleThread(item)),
     visibleInCurrentProvider: Boolean(!archived && !visibilityMismatch && !(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent)),
     canRepairVisibility: Boolean(!archived && (item.threadRowExists || (item.fileExists && isLikelyUserVisibleThread(item))) && (visibilityMismatch || (item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent))),
     visibilityStatus: archived ? 'archived' : (visibilityMismatch ? 'metadata_mismatch' : 'visible'),
@@ -410,7 +411,7 @@ function sessionItemFromRow(row, file, indexItem = null) {
   return {
     id: String(row.id || file?.id || '').trim(),
     shortId: shortId(row.id || file?.id),
-    title: indexItem?.title || normalizeText(row.title, 120) || file?.title || '未命名会话',
+    title: normalizeText(row.title, 120) || indexItem?.title || file?.title || '未命名会话',
     cwd,
     project: cwd ? normalizeText(path.basename(cwd), 80) : null,
     source: normalizeText(sourceScalar(row.source) || sourceScalar(row.thread_source), 60) || indexItem?.source || file?.source || null,
@@ -510,6 +511,7 @@ export async function listCodexSessions({ archivedOnly = true } = {}) {
     currentModelProvider,
     providerMismatchCount: items.filter((item) => item.providerMismatch).length,
     repairableVisibilityCount: items.filter((item) => item.canRepairVisibility).length,
+    sidebarRefreshableCount: items.filter((item) => item.canRefreshSidebar).length,
     sessions: items,
     startedAt,
     finishedAt: nowMs(),
@@ -639,6 +641,25 @@ function sqliteSessionColumnValue(item, targetProvider, columnName) {
   return undefined;
 }
 
+function sidebarSourceForItem(item) {
+  return isLikelyUserVisibleThread(item) ? 'vscode' : (normalizeText(item.source || item.fileSource, 80) || 'file');
+}
+
+function sidebarThreadSourceForItem(item) {
+  return isLikelyUserVisibleThread(item) ? 'vscode' : (normalizeText(item.threadSource || item.source || item.fileSource, 80) || 'file');
+}
+
+function normalizedSidebarCwd(item) {
+  return normalizePathText(item.cwd, 260) || '';
+}
+
+function normalizedSidebarRolloutPath(item) {
+  const fileRelativePath = normalizePathText(item.fileRelativePath, 320);
+  if (fileRelativePath) return fileRelativePath;
+  const rolloutPath = normalizePathText(item.rolloutPath, 320);
+  return rolloutPath || '';
+}
+
 function syncSqliteSessions(dataDir, selected, targetProvider) {
   const dbPath = path.join(dataDir, STATE_DB_FILE);
   const db = new DatabaseSync(dbPath);
@@ -717,6 +738,93 @@ function syncSqliteSessions(dataDir, selected, targetProvider) {
   }
 }
 
+function syncSqliteSidebarMetadata(dataDir, selected, targetProvider) {
+  const dbPath = path.join(dataDir, STATE_DB_FILE);
+  const db = new DatabaseSync(dbPath);
+  try {
+    db.exec('PRAGMA busy_timeout = 3000');
+    const columns = db.prepare('PRAGMA table_info(threads)').all();
+    const columnNames = new Set(columns.map((row) => String(row.name || '')));
+    const existingStmt = db.prepare('SELECT id FROM threads WHERE id = ?');
+    let updated = 0;
+    let inserted = 0;
+    const skipped = [];
+
+    for (const item of selected) {
+      if (!existingStmt.get(item.id)) {
+        const values = new Map();
+        for (const column of columns) {
+          const name = String(column.name || '');
+          const value = sqliteSessionColumnValue(item, targetProvider, name);
+          if (value !== undefined) values.set(name, value);
+        }
+        const missingRequired = columns
+          .filter((column) => !column.pk && column.notnull && column.dflt_value == null)
+          .map((column) => String(column.name || ''))
+          .filter((name) => !values.has(name) || values.get(name) == null);
+        if (!values.has('id') || missingRequired.length) {
+          skipped.push({
+            id: item.shortId || shortId(item.id),
+            reason: 'unsupported_sqlite_schema',
+            missingColumns: missingRequired,
+          });
+          continue;
+        }
+        const names = [...values.keys()];
+        const stmt = db.prepare(`INSERT INTO threads (${names.map(quoteSqliteIdent).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`);
+        const info = stmt.run(...names.map((name) => values.get(name)));
+        inserted += Number(info.changes || 0);
+        continue;
+      }
+
+      const sets = [];
+      const values = [];
+      if (columnNames.has('model_provider')) {
+        sets.push('model_provider = ?');
+        values.push(targetProvider);
+      }
+      if (columnNames.has('source')) {
+        sets.push('source = ?');
+        values.push(sidebarSourceForItem(item));
+      }
+      if (columnNames.has('thread_source')) {
+        sets.push('thread_source = ?');
+        values.push(sidebarThreadSourceForItem(item));
+      }
+      if (columnNames.has('cwd')) {
+        sets.push('cwd = ?');
+        values.push(normalizedSidebarCwd(item));
+      }
+      if (columnNames.has('rollout_path')) {
+        sets.push('rollout_path = ?');
+        values.push(normalizedSidebarRolloutPath(item));
+      }
+      if (columnNames.has('title')) {
+        sets.push('title = ?');
+        values.push(item?.title || item?.shortId || item?.id || '');
+      }
+      if (columnNames.has('first_user_message')) {
+        sets.push('first_user_message = ?');
+        values.push(item?.title || item?.shortId || item?.id || '');
+      }
+      if (columnNames.has('preview')) {
+        sets.push('preview = ?');
+        values.push(item?.title || item?.shortId || item?.id || '');
+      }
+      if (columnNames.has('has_user_event')) sets.push('has_user_event = 1');
+      if (columnNames.has('archived')) sets.push('archived = 0');
+      if (!sets.length) continue;
+      const stmt = db.prepare(`UPDATE threads SET ${sets.join(', ')} WHERE id = ?`);
+      const info = stmt.run(...values, item.id);
+      updated += Number(info.changes || 0);
+    }
+
+    return { updated, inserted, skipped };
+  } finally {
+    db.close();
+  }
+}
+
 async function rewriteRolloutProvider(file, targetProvider) {
   if (!file?.absolutePath) return null;
   const info = await readFirstLineInfo(file.absolutePath);
@@ -787,14 +895,20 @@ function setIndexProvider(row, targetProvider) {
   }
 }
 
-function sessionIndexRowForItem(item, existing, targetProvider) {
+function sessionIndexRowForItem(item, existing, targetProvider, options = {}) {
   const row = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
+  const forceSidebar = Boolean(options.forceSidebar);
   row.id = item.id;
-  if (!normalizeText(row.thread_name || row.title || row.name, 120)) {
+  if (forceSidebar || !normalizeText(row.thread_name || row.title || row.name, 120)) {
     row.thread_name = item.title || item.shortId || item.id;
   }
-  if (item.cwd) row.cwd = item.cwd;
-  if (item.source && !normalizeText(row.source || row.thread_source, 80)) row.source = item.source;
+  if (item.cwd) row.cwd = forceSidebar ? normalizedSidebarCwd(item) : item.cwd;
+  if (forceSidebar) {
+    row.source = sidebarSourceForItem(item);
+    row.thread_source = sidebarThreadSourceForItem(item);
+  } else if (item.source && !normalizeText(row.source || row.thread_source, 80)) {
+    row.source = item.source;
+  }
   const updatedAt = Number(item.updatedAt || 0);
   if (Number.isFinite(updatedAt) && updatedAt > 0) {
     row.updated_at_ms = updatedAt;
@@ -847,6 +961,58 @@ async function rewriteSessionIndexProviders(dataDir, selected, backupDir, target
     if (existing) updated += 1;
     else inserted += 1;
     appended.push(JSON.stringify(sessionIndexRowForItem(item, existing, targetProvider)));
+  }
+
+  const next = [...kept, ...appended].join('\n') + '\n';
+  await fs.writeFile(indexPath, next, 'utf8');
+  return {
+    changed: true,
+    updated,
+    inserted,
+    removedDuplicateRows: Math.max(0, existingMatched - updated),
+  };
+}
+
+async function rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, targetProvider) {
+  const indexPath = path.join(dataDir, SESSION_INDEX_FILE);
+  const selectedById = new Map(selected.map((item) => [item.id, item]));
+  if (!selectedById.size) return { changed: false, updated: 0, inserted: 0 };
+
+  const latestById = new Map();
+  const kept = [];
+  let existingMatched = 0;
+  let content = '';
+  if (await exists(indexPath)) {
+    await copyIfExists(indexPath, path.join(backupDir, SESSION_INDEX_FILE));
+    content = await fs.readFile(indexPath, 'utf8');
+  }
+
+  for (const line of content.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    let parsed = null;
+    try {
+      parsed = JSON.parse(line);
+    } catch {
+      kept.push(line);
+      continue;
+    }
+    const id = String(parsed?.id || '').trim();
+    if (id && selectedById.has(id)) {
+      latestById.set(id, parsed);
+      existingMatched += 1;
+      continue;
+    }
+    kept.push(line);
+  }
+
+  const appended = [];
+  let updated = 0;
+  let inserted = 0;
+  for (const item of selected) {
+    const existing = latestById.get(item.id) || null;
+    if (existing) updated += 1;
+    else inserted += 1;
+    appended.push(JSON.stringify(sessionIndexRowForItem(item, existing, targetProvider, { forceSidebar: true })));
   }
 
   const next = [...kept, ...appended].join('\n') + '\n';
@@ -977,6 +1143,120 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     insertedSessionIndexRows: sessionIndex.inserted,
     removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
+  };
+}
+
+export async function repairCodexSessionSidebar({ sessionIds = [], targetProvider = null } = {}) {
+  const ids = [...new Set((Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) {
+    return { ok: false, error: 'No session ids selected', repairedCount: 0 };
+  }
+
+  const dataDir = path.resolve(codexHome());
+  const currentModelProvider = normalizeText(targetProvider, 80) || await readCurrentModelProvider(dataDir);
+  const all = await listCodexSessions({ archivedOnly: false });
+  const byId = new Map(all.sessions.map((item) => [item.id, item]));
+  const files = await collectSessionFiles(dataDir);
+  const filesById = new Map();
+  for (const file of files) {
+    if (file.id && !filesById.has(file.id)) filesById.set(file.id, file);
+  }
+
+  const selected = [];
+  const rejected = [];
+  for (const id of ids) {
+    const item = byId.get(id);
+    if (!item) {
+      rejected.push({ id: shortId(id), reason: 'not_found' });
+      continue;
+    }
+    if (item.archived) {
+      rejected.push({ id: item.shortId || shortId(id), reason: 'archived' });
+      continue;
+    }
+    if (!item.threadRowExists) {
+      rejected.push({ id: item.shortId || shortId(id), reason: 'sqlite_missing' });
+      continue;
+    }
+    if (!isLikelyUserVisibleThread(item)) {
+      rejected.push({ id: item.shortId || shortId(id), reason: 'not_user_visible_thread' });
+      continue;
+    }
+    selected.push(item);
+  }
+
+  if (!selected.length) {
+    return {
+      ok: false,
+      error: 'No sessions can be refreshed for sidebar display',
+      repairedCount: 0,
+      targetProvider: currentModelProvider,
+      rejected,
+    };
+  }
+
+  const backupDir = await createVisibilityBackupDir();
+  const sqliteBackups = [];
+  for (const name of [STATE_DB_FILE, `${STATE_DB_FILE}-wal`, `${STATE_DB_FILE}-shm`]) {
+    const copied = await copyIfExists(path.join(dataDir, name), path.join(backupDir, name));
+    if (copied) sqliteBackups.push(name);
+  }
+
+  let sqliteSync = { updated: 0, inserted: 0, skipped: [] };
+  const dbPath = path.join(dataDir, STATE_DB_FILE);
+  if (await exists(dbPath)) {
+    sqliteSync = syncSqliteSidebarMetadata(dataDir, selected, currentModelProvider);
+  }
+
+  const selectedIds = selected.map((item) => item.id);
+  const rolloutChanges = await repairRolloutProviders(filesById, selectedIds, dataDir, backupDir, currentModelProvider);
+  const sessionIndex = await rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, currentModelProvider);
+
+  await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
+    createdAt: new Date().toISOString(),
+    codexDataRoot: 'CODEX_HOME',
+    requestedCount: ids.length,
+    repairedCount: selected.length,
+    targetProvider: currentModelProvider,
+    repairedSessions: selected.map((item) => ({
+      id: item.id,
+      shortId: item.shortId,
+      project: item.project || null,
+      previousProvider: effectiveProvider(item),
+      fileProvider: item.fileModelProvider || null,
+      indexProvider: item.indexModelProvider || null,
+      indexRowExists: Boolean(item.indexRowExists),
+      indexArchived: Boolean(item.indexArchived),
+      hadUserEvent: Boolean(item.hasUserEvent),
+      source: item.source || null,
+      threadSource: item.threadSource || null,
+      fileLocation: item.fileLocation || null,
+      fileRelativePath: item.fileRelativePath || null,
+      rolloutPathWasPresent: Boolean(item.rolloutPath),
+    })),
+    rejected,
+    sqliteBackups,
+    sqliteSync,
+    updatedRolloutFileCount: rolloutChanges.length,
+    sessionIndex,
+    note: 'Sidebar display repair updates Codex thread metadata only: provider, source/thread_source, cwd, rollout_path, title/preview fields, has_user_event, and session_index. Prompt/content/token bodies are not copied or exposed.',
+  }, null, 2)}\n`, 'utf8');
+
+  return {
+    ok: true,
+    repairedCount: selected.length,
+    requestedCount: ids.length,
+    targetProvider: currentModelProvider,
+    rejected,
+    updatedSqliteRows: sqliteSync.updated,
+    insertedSqliteRows: sqliteSync.inserted,
+    skippedSqliteRows: sqliteSync.skipped,
+    updatedRolloutFileCount: rolloutChanges.length,
+    updatedSessionIndexRows: sessionIndex.updated,
+    insertedSessionIndexRows: sessionIndex.inserted,
+    removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
+    backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
+    note: 'Restart Codex App after refreshing sidebar metadata if the project sidebar is still stale.',
   };
 }
 

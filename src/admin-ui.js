@@ -3795,8 +3795,10 @@ export function renderAdminHtml() {
               <button id="refreshSessionsBtn">${icons.refresh} 刷新</button>
               <button id="selectAllSessionsBtn">全选可删</button>
               <button id="selectRepairableSessionsBtn">全选可修复</button>
+              <button id="selectSidebarSessionsBtn">全选侧栏同步</button>
               <button id="clearSessionSelectionBtn">清空</button>
               <button id="repairSelectedSessionsBtn">${icons.play} 修复可见性</button>
+              <button id="repairSessionSidebarBtn">${icons.play} 同步侧栏显示</button>
               <button class="danger" id="deleteSelectedSessionsBtn">${icons.trash} 删除选中</button>
             </div>
           </div>
@@ -4186,6 +4188,7 @@ const state = {
   sessionsCurrentProvider: null,
   sessionProviderMismatchCount: 0,
   sessionRepairableVisibilityCount: 0,
+  sessionSidebarRefreshableCount: 0,
   selectedSessionIds: new Set(),
   nodeProcesses: [],
   nodeProcessesLoaded: false,
@@ -5830,6 +5833,12 @@ function selectedRepairableSessions() {
   });
 }
 
+function selectedSidebarSessions() {
+  return (state.sessions || []).filter(function(item) {
+    return item.canRefreshSidebar && state.selectedSessionIds.has(item.id);
+  });
+}
+
 function sessionVisibilityLabel(item) {
   if (item.archived) return '\u5df2\u5f52\u6863';
   if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch || item.sqliteMissing || item.userEventMissing) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
@@ -5839,16 +5848,18 @@ function sessionVisibilityLabel(item) {
 function syncSessionControls() {
   const selectedDelete = selectedArchivedSessions().length;
   const selectedRepair = selectedRepairableSessions().length;
+  const selectedSidebar = selectedSidebarSessions().length;
   const provider = state.sessionsCurrentProvider || 'openai';
   if ($('sessionManagerStatus')) {
     $('sessionManagerStatus').textContent = state.sessionsLoading
       ? '\u52a0\u8f7d\u4e2d'
       : ('provider=' + provider + ' \u00b7 \u5df2\u52a0\u8f7d ' + (state.sessions || []).length + ' \u4e2a'
         + (state.sessionRepairableVisibilityCount ? (' \u00b7 \u53ef\u4fee\u590d ' + state.sessionRepairableVisibilityCount) : '')
-        + ((selectedDelete || selectedRepair) ? (' \u00b7 \u5df2\u9009 \u5220\u9664' + selectedDelete + '/\u4fee\u590d' + selectedRepair) : ''));
+        + ((selectedDelete || selectedRepair || selectedSidebar) ? (' \u00b7 \u5df2\u9009 \u5220\u9664' + selectedDelete + '/\u4fee\u590d' + selectedRepair + '/\u4fa7\u680f' + selectedSidebar) : ''));
   }
   if ($('deleteSelectedSessionsBtn')) $('deleteSelectedSessionsBtn').disabled = selectedDelete <= 0 || state.sessionsLoading;
   if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').disabled = selectedRepair <= 0 || state.sessionsLoading;
+  if ($('repairSessionSidebarBtn')) $('repairSessionSidebarBtn').disabled = selectedSidebar <= 0 || state.sessionsLoading;
 }
 
 function renderSessionManager() {
@@ -5870,7 +5881,8 @@ function renderSessionManager() {
   list.innerHTML = state.sessions.map(function(item) {
     const canDelete = Boolean(item.archived);
     const canRepair = Boolean(item.canRepairVisibility);
-    const actionable = canDelete || canRepair;
+    const canRefreshSidebar = Boolean(item.canRefreshSidebar);
+    const actionable = canDelete || canRepair || canRefreshSidebar;
     const checked = state.selectedSessionIds.has(item.id);
     const providerText = item.effectiveModelProvider || item.modelProvider || item.fileModelProvider || 'openai';
     const meta = [
@@ -5889,6 +5901,7 @@ function renderSessionManager() {
       item.indexCwdMismatch ? '<span class="stats-pill">index cwd \u4e0d\u5339\u914d</span>' : '',
       item.sqliteMissing ? '<span class="stats-pill">sqlite \u7f3a\u5931</span>' : '',
       item.userEventMissing ? '<span class="stats-pill">user event \u7f3a\u5931</span>' : '',
+      item.canRefreshSidebar ? '<span class="stats-pill">\u53ef\u540c\u6b65\u4fa7\u680f</span>' : '',
       item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
       item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
     ].filter(Boolean);
@@ -5925,6 +5938,7 @@ async function loadSessions() {
     state.sessionsCurrentProvider = data.currentModelProvider || null;
     state.sessionProviderMismatchCount = Number(data.providerMismatchCount || 0);
     state.sessionRepairableVisibilityCount = Number(data.repairableVisibilityCount || 0);
+    state.sessionSidebarRefreshableCount = Number(data.sidebarRefreshableCount || 0);
     state.sessionsLoaded = true;
     const ids = new Set(state.sessions.map(function(item) { return item.id; }));
     Array.from(state.selectedSessionIds).forEach(function(id) {
@@ -5932,7 +5946,7 @@ async function loadSessions() {
     });
     if ($('sessionManagerHint')) {
       const provider = state.sessionsCurrentProvider || 'openai';
-      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\u3002\u8fd9\u91cc\u53ea\u663e\u793a\u6807\u9898\u3001\u5de5\u4f5c\u533a\u3001\u66f4\u65b0\u65f6\u95f4\u3001\u5f52\u6863\u72b6\u6001\u3001provider \u548c\u6587\u4ef6\u4f4d\u7f6e\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
+      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\uff1b\u53ef\u540c\u6b65\u4fa7\u680f ' + state.sessionSidebarRefreshableCount + ' \u4e2a\u3002\u8fd9\u91cc\u53ea\u663e\u793a\u6807\u9898\u3001\u5de5\u4f5c\u533a\u3001\u66f4\u65b0\u65f6\u95f4\u3001\u5f52\u6863\u72b6\u6001\u3001provider \u548c\u6587\u4ef6\u4f4d\u7f6e\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
     }
     renderSessionManager();
   } catch (err) {
@@ -5956,6 +5970,13 @@ function selectAllDeletableSessions() {
 function selectAllRepairableSessions() {
   (state.sessions || []).forEach(function(item) {
     if (item.canRepairVisibility) state.selectedSessionIds.add(item.id);
+  });
+  renderSessionManager();
+}
+
+function selectAllSidebarSessions() {
+  (state.sessions || []).forEach(function(item) {
+    if (item.canRefreshSidebar) state.selectedSessionIds.add(item.id);
   });
   renderSessionManager();
 }
@@ -5988,6 +6009,33 @@ async function repairSelectedSessionsVisibility() {
     return;
   }
   toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u53ef\u89c1\u6027');
+  state.selectedSessionIds.clear();
+  await loadSessions();
+}
+
+async function repairSelectedSessionsSidebar() {
+  const selected = selectedSidebarSessions();
+  if (!selected.length) return toast('\u8bf7\u5148\u9009\u62e9\u9700\u8981\u540c\u6b65\u4fa7\u680f\u663e\u793a\u7684\u4f1a\u8bdd');
+  const provider = state.sessionsCurrentProvider || '\u5f53\u524d provider';
+  const confirmMessage = '\u786e\u5b9a\u540c\u6b65\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u663e\u793a\u5143\u4fe1\u606f\u5230 ' + provider + ' \u5417\uff1f'
+    + String.fromCharCode(10, 10)
+    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u540c\u6b65 provider/source/cwd/preview \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+  if (!confirm(confirmMessage)) return;
+  const res = await fetch('/_admin/sessions/repair-sidebar', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionIds: selected.map(function(item) { return item.id; }),
+      targetProvider: state.sessionsCurrentProvider || null,
+    }),
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok || data.ok === false) {
+    toast(data.error || '\u540c\u6b65\u4fa7\u680f\u663e\u793a\u5931\u8d25');
+    return;
+  }
+  toast('\u5df2\u540c\u6b65 ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u5143\u4fe1\u606f');
   state.selectedSessionIds.clear();
   await loadSessions();
 }
@@ -7665,8 +7713,10 @@ $('activateApiServiceBtn').onclick = activateApiServiceForCodexApp;
 if ($('refreshSessionsBtn')) $('refreshSessionsBtn').onclick = loadSessions;
 if ($('selectAllSessionsBtn')) $('selectAllSessionsBtn').onclick = selectAllDeletableSessions;
 if ($('selectRepairableSessionsBtn')) $('selectRepairableSessionsBtn').onclick = selectAllRepairableSessions;
+if ($('selectSidebarSessionsBtn')) $('selectSidebarSessionsBtn').onclick = selectAllSidebarSessions;
 if ($('clearSessionSelectionBtn')) $('clearSessionSelectionBtn').onclick = clearSessionSelection;
 if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').onclick = repairSelectedSessionsVisibility;
+if ($('repairSessionSidebarBtn')) $('repairSessionSidebarBtn').onclick = repairSelectedSessionsSidebar;
 if ($('deleteSelectedSessionsBtn')) $('deleteSelectedSessionsBtn').onclick = deleteSelectedSessions;
 if ($('refreshProcessCleanupBtn')) $('refreshProcessCleanupBtn').onclick = loadProcessCleanup;
 if ($('selectKillableProcessesBtn')) $('selectKillableProcessesBtn').onclick = selectAllKillableNodeProcesses;

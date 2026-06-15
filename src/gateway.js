@@ -41,7 +41,7 @@ import { getProxyAccountIdsForRequest, loadLocalAccessConfig, saveLocalAccessCon
 import { clearLocalAccessAccountFailure, clearLocalAccessStats, extractUsageCapture, loadLocalAccessStats, recordLocalAccessStats } from './local-access-stats.js';
 import { killNodeProcessCleanupCandidates, listNodeProcessCleanupCandidates } from './process-cleaner.js';
 import { repairSessionVisibility } from './session-visibility.js';
-import { deleteCodexSessions, listCodexSessions, repairCodexSessionVisibility } from './session-manager.js';
+import { deleteCodexSessions, listCodexSessions, repairCodexSessionSidebar, repairCodexSessionVisibility } from './session-manager.js';
 import { getTokenKeeperState, runTokenKeeperNow } from './token-keeper.js';
 import {
   cancelCodexOAuthLogin,
@@ -1941,6 +1941,16 @@ async function handleSessionRepairVisibility(req, res) {
   return jsonResponse(res, result.ok ? 200 : 400, result);
 }
 
+async function handleSessionRepairSidebar(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  const result = await repairCodexSessionSidebar({
+    sessionIds: payload.sessionIds || payload.session_ids || [],
+    targetProvider: payload.targetProvider || payload.target_provider || null,
+  });
+  return jsonResponse(res, result.ok ? 200 : 400, result);
+}
+
 async function handleProcessCleanupList(req, res) {
   return jsonResponse(res, 200, await listNodeProcessCleanupCandidates());
 }
@@ -2026,6 +2036,7 @@ export function createServer(config) {
       if (req.method === 'GET' && u.pathname === '/_admin/sessions') return await handleSessionList(req, res, u);
       if (req.method === 'POST' && u.pathname === '/_admin/sessions/delete') return await handleSessionDelete(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/sessions/repair-visibility') return await handleSessionRepairVisibility(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/sessions/repair-sidebar') return await handleSessionRepairSidebar(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/process-cleanup') return await handleProcessCleanupList(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/process-cleanup/kill') return await handleProcessCleanupKill(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/shutdown') return handleShutdown(req, res);
