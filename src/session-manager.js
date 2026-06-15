@@ -670,11 +670,11 @@ function syncSqliteSessions(dataDir, selected, targetProvider) {
           sets.push('has_user_event = 1');
         }
         if (columnNames.has('first_user_message')) {
-          sets.push("first_user_message = CASE WHEN COALESCE(first_user_message, '') = '' THEN ? ELSE first_user_message END");
+          sets.push(isLikelyUserVisibleThread(item) ? 'first_user_message = ?' : "first_user_message = CASE WHEN COALESCE(first_user_message, '') = '' THEN ? ELSE first_user_message END");
           values.push(item?.title || item?.shortId || item?.id || '');
         }
         if (columnNames.has('preview')) {
-          sets.push("preview = CASE WHEN COALESCE(preview, '') = '' THEN ? ELSE preview END");
+          sets.push(isLikelyUserVisibleThread(item) ? 'preview = ?' : "preview = CASE WHEN COALESCE(preview, '') = '' THEN ? ELSE preview END");
           values.push(item?.title || item?.shortId || item?.id || '');
         }
         if (!sets.length) continue;
