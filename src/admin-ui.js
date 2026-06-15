@@ -6026,7 +6026,8 @@ async function repairSelectedSessionsSidebar() {
   const provider = state.sessionsCurrentProvider || '\u5f53\u524d provider';
   const confirmMessage = '\u786e\u5b9a\u540c\u6b65\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u663e\u793a\u5143\u4fe1\u606f\u5230 ' + provider + ' \u5417\uff1f'
     + String.fromCharCode(10, 10)
-    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u540c\u6b65 provider/source/cwd/preview \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u540c\u6b65 provider/source/cwd/preview/updated_at \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff1b'
+    + '\u5237\u65b0 updated_at \u662f\u4e3a\u4e86\u8ba9 Codex App \u6700\u8fd1\u7ebf\u7a0b/\u9879\u76ee\u4fa7\u680f\u7d22\u5f15\u91cd\u65b0\u6536\u5f55\u3002\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
   if (!confirm(confirmMessage)) return;
   const res = await fetch('/_admin/sessions/repair-sidebar', {
     method: 'POST',
@@ -6042,7 +6043,7 @@ async function repairSelectedSessionsSidebar() {
     toast(data.error || '\u540c\u6b65\u4fa7\u680f\u663e\u793a\u5931\u8d25');
     return;
   }
-  toast('\u5df2\u540c\u6b65 ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u5143\u4fe1\u606f');
+  toast('\u5df2\u540c\u6b65 ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u5143\u4fe1\u606f\uff0c\u5df2\u5237\u65b0\u4fa7\u680f\u7d22\u5f15\u65f6\u95f4');
   state.selectedSessionIds.clear();
   await loadSessions();
 }

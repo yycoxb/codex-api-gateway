@@ -749,7 +749,7 @@ function syncSqliteSessions(dataDir, selected, targetProvider) {
   }
 }
 
-function syncSqliteSidebarMetadata(dataDir, selected, targetProvider) {
+function syncSqliteSidebarMetadata(dataDir, selected, targetProvider, touchAtMs = Date.now()) {
   const dbPath = path.join(dataDir, STATE_DB_FILE);
   const db = new DatabaseSync(dbPath);
   try {
@@ -757,6 +757,7 @@ function syncSqliteSidebarMetadata(dataDir, selected, targetProvider) {
     const columns = db.prepare('PRAGMA table_info(threads)').all();
     const columnNames = new Set(columns.map((row) => String(row.name || '')));
     const existingStmt = db.prepare('SELECT id FROM threads WHERE id = ?');
+    const touchAtSec = Math.floor(touchAtMs / 1000);
     let updated = 0;
     let inserted = 0;
     const skipped = [];
@@ -821,6 +822,14 @@ function syncSqliteSidebarMetadata(dataDir, selected, targetProvider) {
       if (columnNames.has('preview')) {
         sets.push('preview = ?');
         values.push(item?.title || item?.shortId || item?.id || '');
+      }
+      if (columnNames.has('updated_at_ms')) {
+        sets.push('updated_at_ms = ?');
+        values.push(touchAtMs);
+      }
+      if (columnNames.has('updated_at')) {
+        sets.push('updated_at = ?');
+        values.push(touchAtSec);
       }
       if (columnNames.has('has_user_event')) sets.push('has_user_event = 1');
       if (columnNames.has('archived')) sets.push('archived = 0');
@@ -909,6 +918,7 @@ function setIndexProvider(row, targetProvider) {
 function sessionIndexRowForItem(item, existing, targetProvider, options = {}) {
   const row = existing && typeof existing === 'object' && !Array.isArray(existing) ? { ...existing } : {};
   const forceSidebar = Boolean(options.forceSidebar);
+  const touchAtMs = Number(options.touchAtMs || 0);
   row.id = item.id;
   if (forceSidebar || !normalizeText(row.thread_name || row.title || row.name, 120)) {
     row.thread_name = item.title || item.shortId || item.id;
@@ -920,7 +930,7 @@ function sessionIndexRowForItem(item, existing, targetProvider, options = {}) {
   } else if (item.source && !normalizeText(row.source || row.thread_source, 80)) {
     row.source = item.source;
   }
-  const updatedAt = Number(item.updatedAt || 0);
+  const updatedAt = Number(touchAtMs || item.updatedAt || 0);
   if (Number.isFinite(updatedAt) && updatedAt > 0) {
     row.updated_at_ms = updatedAt;
     row.updated_at = Math.floor(updatedAt / 1000);
@@ -984,7 +994,7 @@ async function rewriteSessionIndexProviders(dataDir, selected, backupDir, target
   };
 }
 
-async function rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, targetProvider) {
+async function rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, targetProvider, touchAtMs = Date.now()) {
   const indexPath = path.join(dataDir, SESSION_INDEX_FILE);
   const selectedById = new Map(selected.map((item) => [item.id, item]));
   if (!selectedById.size) return { changed: false, updated: 0, inserted: 0 };
@@ -1023,7 +1033,7 @@ async function rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, 
     const existing = latestById.get(item.id) || null;
     if (existing) updated += 1;
     else inserted += 1;
-    appended.push(JSON.stringify(sessionIndexRowForItem(item, existing, targetProvider, { forceSidebar: true })));
+    appended.push(JSON.stringify(sessionIndexRowForItem(item, existing, targetProvider, { forceSidebar: true, touchAtMs })));
   }
 
   const next = [...kept, ...appended].join('\n') + '\n';
@@ -1211,6 +1221,7 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
   }
 
   const backupDir = await createVisibilityBackupDir();
+  const sidebarTouchAtMs = Date.now();
   const sqliteBackups = [];
   for (const name of [STATE_DB_FILE, `${STATE_DB_FILE}-wal`, `${STATE_DB_FILE}-shm`]) {
     const copied = await copyIfExists(path.join(dataDir, name), path.join(backupDir, name));
@@ -1220,12 +1231,12 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
   let sqliteSync = { updated: 0, inserted: 0, skipped: [] };
   const dbPath = path.join(dataDir, STATE_DB_FILE);
   if (await exists(dbPath)) {
-    sqliteSync = syncSqliteSidebarMetadata(dataDir, selected, currentModelProvider);
+    sqliteSync = syncSqliteSidebarMetadata(dataDir, selected, currentModelProvider, sidebarTouchAtMs);
   }
 
   const selectedIds = selected.map((item) => item.id);
   const rolloutChanges = await repairRolloutProviders(filesById, selectedIds, dataDir, backupDir, currentModelProvider);
-  const sessionIndex = await rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, currentModelProvider);
+  const sessionIndex = await rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, currentModelProvider, sidebarTouchAtMs);
 
   await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
     createdAt: new Date().toISOString(),
@@ -1252,9 +1263,10 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
     rejected,
     sqliteBackups,
     sqliteSync,
+    sidebarTouchAtMs,
     updatedRolloutFileCount: rolloutChanges.length,
     sessionIndex,
-    note: 'Sidebar display repair updates Codex thread metadata only: provider, source/thread_source, cwd, rollout_path, title/preview fields, has_user_event, and session_index. Prompt/content/token bodies are not copied or exposed.',
+    note: 'Sidebar display repair updates Codex thread metadata only: provider, source/thread_source, cwd, rollout_path, title/preview fields, updated_at, has_user_event, and session_index. Prompt/content/token bodies are not copied or exposed.',
   }, null, 2)}\n`, 'utf8');
 
   return {
@@ -1266,12 +1278,13 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
     updatedSqliteRows: sqliteSync.updated,
     insertedSqliteRows: sqliteSync.inserted,
     skippedSqliteRows: sqliteSync.skipped,
+    sidebarTouchAtMs,
     updatedRolloutFileCount: rolloutChanges.length,
     updatedSessionIndexRows: sessionIndex.updated,
     insertedSessionIndexRows: sessionIndex.inserted,
     removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
-    note: 'Restart Codex App after refreshing sidebar metadata if the project sidebar is still stale.',
+    note: 'Restart Codex App after refreshing sidebar metadata so its recent-thread/project sidebar cache reloads.',
   };
 }
 
