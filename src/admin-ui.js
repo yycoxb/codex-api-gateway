@@ -3796,9 +3796,11 @@ export function renderAdminHtml() {
               <button id="selectAllSessionsBtn">全选可删</button>
               <button id="selectRepairableSessionsBtn">全选可修复</button>
               <button id="selectSidebarSessionsBtn">全选侧栏同步</button>
+              <button id="selectProjectAssignmentSessionsBtn">全选项目绑定</button>
               <button id="clearSessionSelectionBtn">清空</button>
               <button id="repairSelectedSessionsBtn">${icons.play} 修复可见性</button>
               <button id="repairSessionSidebarBtn">${icons.play} 同步侧栏显示</button>
+              <button id="repairProjectAssignmentBtn">${icons.play} 修复项目绑定</button>
               <button class="danger" id="deleteSelectedSessionsBtn">${icons.trash} 删除选中</button>
             </div>
           </div>
@@ -4191,6 +4193,7 @@ const state = {
   sessionSidebarRefreshableCount: 0,
   sessionSidebarVisibleCount: 0,
   sessionChildThreadCount: 0,
+  sessionProjectAssignmentRepairableCount: 0,
   selectedSessionIds: new Set(),
   nodeProcesses: [],
   nodeProcessesLoaded: false,
@@ -5841,9 +5844,16 @@ function selectedSidebarSessions() {
   });
 }
 
+function selectedProjectAssignmentSessions() {
+  return (state.sessions || []).filter(function(item) {
+    return item.canRepairProjectAssignment && state.selectedSessionIds.has(item.id);
+  });
+}
+
 function sessionVisibilityLabel(item) {
   if (item.archived) return '\u5df2\u5f52\u6863';
   if (item.isSubagentThread) return '\u5b50\u4f1a\u8bdd\uff0c\u4e0d\u5728\u4fa7\u680f';
+  if (item.canRepairProjectAssignment) return '\u53ef\u4fee\u590d\u9879\u76ee\u7ed1\u5b9a';
   if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch || item.sqliteMissing || item.userEventMissing) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
   if (item.sidebarVisibleInCurrentProvider) return '\u4fa7\u680f\u4e3b\u4f1a\u8bdd';
   return '\u5143\u4fe1\u606f\u53ef\u89c1';
@@ -5853,17 +5863,20 @@ function syncSessionControls() {
   const selectedDelete = selectedArchivedSessions().length;
   const selectedRepair = selectedRepairableSessions().length;
   const selectedSidebar = selectedSidebarSessions().length;
+  const selectedProjectAssignment = selectedProjectAssignmentSessions().length;
   const provider = state.sessionsCurrentProvider || 'openai';
   if ($('sessionManagerStatus')) {
     $('sessionManagerStatus').textContent = state.sessionsLoading
       ? '\u52a0\u8f7d\u4e2d'
       : ('provider=' + provider + ' \u00b7 \u5df2\u52a0\u8f7d ' + (state.sessions || []).length + ' \u4e2a'
         + (state.sessionRepairableVisibilityCount ? (' \u00b7 \u53ef\u4fee\u590d ' + state.sessionRepairableVisibilityCount) : '')
-        + ((selectedDelete || selectedRepair || selectedSidebar) ? (' \u00b7 \u5df2\u9009 \u5220\u9664' + selectedDelete + '/\u4fee\u590d' + selectedRepair + '/\u4fa7\u680f' + selectedSidebar) : ''));
+        + (state.sessionProjectAssignmentRepairableCount ? (' \u00b7 \u9879\u76ee\u7ed1\u5b9a ' + state.sessionProjectAssignmentRepairableCount) : '')
+        + ((selectedDelete || selectedRepair || selectedSidebar || selectedProjectAssignment) ? (' \u00b7 \u5df2\u9009 \u5220\u9664' + selectedDelete + '/\u4fee\u590d' + selectedRepair + '/\u4fa7\u680f' + selectedSidebar + '/\u9879\u76ee' + selectedProjectAssignment) : ''));
   }
   if ($('deleteSelectedSessionsBtn')) $('deleteSelectedSessionsBtn').disabled = selectedDelete <= 0 || state.sessionsLoading;
   if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').disabled = selectedRepair <= 0 || state.sessionsLoading;
   if ($('repairSessionSidebarBtn')) $('repairSessionSidebarBtn').disabled = selectedSidebar <= 0 || state.sessionsLoading;
+  if ($('repairProjectAssignmentBtn')) $('repairProjectAssignmentBtn').disabled = selectedProjectAssignment <= 0 || state.sessionsLoading;
 }
 
 function renderSessionManager() {
@@ -5886,7 +5899,8 @@ function renderSessionManager() {
     const canDelete = Boolean(item.archived);
     const canRepair = Boolean(item.canRepairVisibility);
     const canRefreshSidebar = Boolean(item.canRefreshSidebar);
-    const actionable = canDelete || canRepair || canRefreshSidebar;
+    const canRepairProjectAssignment = Boolean(item.canRepairProjectAssignment);
+    const actionable = canDelete || canRepair || canRefreshSidebar || canRepairProjectAssignment;
     const checked = state.selectedSessionIds.has(item.id);
     const providerText = item.effectiveModelProvider || item.modelProvider || item.fileModelProvider || 'openai';
     const meta = [
@@ -5907,6 +5921,9 @@ function renderSessionManager() {
       item.userEventMissing ? '<span class="stats-pill">user event \u7f3a\u5931</span>' : '',
       item.isSubagentThread ? '<span class="stats-pill">\u5b50\u4f1a\u8bdd/\u4e0d\u8fdb\u4fa7\u680f</span>' : '',
       item.canRefreshSidebar ? '<span class="stats-pill">\u53ef\u540c\u6b65\u4fa7\u680f</span>' : '',
+      item.canRepairProjectAssignment ? '<span class="stats-pill">\u53ef\u4fee\u590d\u9879\u76ee\u7ed1\u5b9a</span>' : '',
+      item.inferredProjectLabel ? '<span class="stats-pill">\u9879\u76ee\u2192' + escapeHtml(item.inferredProjectLabel) + '</span>' : '',
+      item.projectAssignmentAmbiguous ? '<span class="stats-pill">\u9879\u76ee\u7ed1\u5b9a\u6709\u6b67\u4e49</span>' : '',
       item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
       item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
     ].filter(Boolean);
@@ -5917,7 +5934,7 @@ function renderSessionManager() {
       item.shortId ? ('id=' + item.shortId) : '',
     ].filter(Boolean);
     const pillText = canDelete ? '\u53ef\u5220\u9664' : (canRepair ? '\u53ef\u4fee\u590d' : sessionVisibilityLabel(item));
-    const pillClass = (canDelete || canRepair || item.sidebarVisibleInCurrentProvider || item.isSubagentThread) ? '' : 'fail';
+    const pillClass = (canDelete || canRepair || canRepairProjectAssignment || item.sidebarVisibleInCurrentProvider || item.isSubagentThread) ? '' : 'fail';
     return '<label class="session-row ' + (actionable ? '' : 'disabled') + '">' +
       '<input type="checkbox" data-session-select value="' + escapeHtml(item.id) + '"' + (checked ? ' checked' : '') + (actionable ? '' : ' disabled') + '>' +
       '<div class="session-main">' +
@@ -5946,6 +5963,7 @@ async function loadSessions() {
     state.sessionSidebarRefreshableCount = Number(data.sidebarRefreshableCount || 0);
     state.sessionSidebarVisibleCount = Number(data.sidebarVisibleCount || 0);
     state.sessionChildThreadCount = Number(data.childThreadCount || 0);
+    state.sessionProjectAssignmentRepairableCount = Number(data.projectAssignmentRepairableCount || 0);
     state.sessionsLoaded = true;
     const ids = new Set(state.sessions.map(function(item) { return item.id; }));
     Array.from(state.selectedSessionIds).forEach(function(id) {
@@ -5953,7 +5971,7 @@ async function loadSessions() {
     });
     if ($('sessionManagerHint')) {
       const provider = state.sessionsCurrentProvider || 'openai';
-      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u4fa7\u680f\u4e3b\u4f1a\u8bdd ' + state.sessionSidebarVisibleCount + ' \u4e2a\uff1b\u5b50\u4f1a\u8bdd ' + state.sessionChildThreadCount + ' \u4e2a\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\uff1b\u53ef\u540c\u6b65\u4fa7\u680f ' + state.sessionSidebarRefreshableCount + ' \u4e2a\u3002\u5b50\u4f1a\u8bdd/subagent \u4e0d\u4f1a\u51fa\u73b0\u5728 Codex App \u5de6\u4fa7\u666e\u901a\u5bf9\u8bdd\u5217\u8868\u3002\u8fd9\u91cc\u4e0d\u5c55\u793a prompt/content/token\u3002';
+      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u4fa7\u680f\u4e3b\u4f1a\u8bdd ' + state.sessionSidebarVisibleCount + ' \u4e2a\uff1b\u5b50\u4f1a\u8bdd ' + state.sessionChildThreadCount + ' \u4e2a\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\uff1b\u53ef\u540c\u6b65\u4fa7\u680f ' + state.sessionSidebarRefreshableCount + ' \u4e2a\uff1b\u53ef\u4fee\u590d\u9879\u76ee\u7ed1\u5b9a ' + state.sessionProjectAssignmentRepairableCount + ' \u4e2a\u3002\u9879\u76ee\u7ed1\u5b9a\u4fee\u590d\u4f1a\u6309 Codex App \u6e90\u7801\u540c\u6b65 thread-project-assignments\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
     }
     renderSessionManager();
   } catch (err) {
@@ -5984,6 +6002,13 @@ function selectAllRepairableSessions() {
 function selectAllSidebarSessions() {
   (state.sessions || []).forEach(function(item) {
     if (item.canRefreshSidebar) state.selectedSessionIds.add(item.id);
+  });
+  renderSessionManager();
+}
+
+function selectAllProjectAssignmentSessions() {
+  (state.sessions || []).forEach(function(item) {
+    if (item.canRepairProjectAssignment) state.selectedSessionIds.add(item.id);
   });
   renderSessionManager();
 }
@@ -6044,6 +6069,32 @@ async function repairSelectedSessionsSidebar() {
     return;
   }
   toast('\u5df2\u540c\u6b65 ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u5143\u4fe1\u606f\uff0c\u5df2\u5237\u65b0\u4fa7\u680f\u7d22\u5f15\u65f6\u95f4');
+  state.selectedSessionIds.clear();
+  await loadSessions();
+}
+
+async function repairSelectedSessionsProjectAssignment() {
+  const selected = selectedProjectAssignmentSessions();
+  if (!selected.length) return toast('\u8bf7\u5148\u9009\u62e9\u53ef\u4fee\u590d\u9879\u76ee\u7ed1\u5b9a\u7684\u4f1a\u8bdd');
+  const confirmMessage = '\u786e\u5b9a\u4fee\u590d\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u9879\u76ee\u7ed1\u5b9a\u5417\uff1f'
+    + String.fromCharCode(10, 10)
+    + '\u4f1a\u5148\u5907\u4efd Codex App \u5168\u5c40\u72b6\u6001\uff0c\u518d\u6309 Codex App \u6e90\u7801\u7684\u62d6\u62fd\u903b\u8f91\u66f4\u65b0 thread-project-assignments\uff0c\u5e76\u4ece projectless-thread-ids \u79fb\u9664\u3002'
+    + '\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\uff0c\u4e5f\u4e0d\u4f1a\u81ea\u52a8\u91cd\u542f Codex App\u3002';
+  if (!confirm(confirmMessage)) return;
+  const res = await fetch('/_admin/sessions/repair-project-assignment', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      sessionIds: selected.map(function(item) { return item.id; }),
+    }),
+  });
+  const data = await res.json();
+  setOutput(data);
+  if (!res.ok || data.ok === false) {
+    toast(data.error || '\u4fee\u590d\u9879\u76ee\u7ed1\u5b9a\u5931\u8d25');
+    return;
+  }
+  toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u9879\u76ee\u7ed1\u5b9a\uff0c\u8bf7\u91cd\u542f Codex App \u540e\u67e5\u770b');
   state.selectedSessionIds.clear();
   await loadSessions();
 }
@@ -7722,9 +7773,11 @@ if ($('refreshSessionsBtn')) $('refreshSessionsBtn').onclick = loadSessions;
 if ($('selectAllSessionsBtn')) $('selectAllSessionsBtn').onclick = selectAllDeletableSessions;
 if ($('selectRepairableSessionsBtn')) $('selectRepairableSessionsBtn').onclick = selectAllRepairableSessions;
 if ($('selectSidebarSessionsBtn')) $('selectSidebarSessionsBtn').onclick = selectAllSidebarSessions;
+if ($('selectProjectAssignmentSessionsBtn')) $('selectProjectAssignmentSessionsBtn').onclick = selectAllProjectAssignmentSessions;
 if ($('clearSessionSelectionBtn')) $('clearSessionSelectionBtn').onclick = clearSessionSelection;
 if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').onclick = repairSelectedSessionsVisibility;
 if ($('repairSessionSidebarBtn')) $('repairSessionSidebarBtn').onclick = repairSelectedSessionsSidebar;
+if ($('repairProjectAssignmentBtn')) $('repairProjectAssignmentBtn').onclick = repairSelectedSessionsProjectAssignment;
 if ($('deleteSelectedSessionsBtn')) $('deleteSelectedSessionsBtn').onclick = deleteSelectedSessions;
 if ($('refreshProcessCleanupBtn')) $('refreshProcessCleanupBtn').onclick = loadProcessCleanup;
 if ($('selectKillableProcessesBtn')) $('selectKillableProcessesBtn').onclick = selectAllKillableNodeProcesses;

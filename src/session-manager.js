@@ -10,12 +10,21 @@ import { nowMs } from './utils.js';
 const STATE_DB_FILE = 'state_5.sqlite';
 const CONFIG_FILE = 'config.toml';
 const SESSION_INDEX_FILE = 'session_index.jsonl';
+const CODEX_GLOBAL_STATE_FILE = '.codex-global-state.json';
 const SESSION_DIRS = ['sessions', 'archived_sessions'];
 const SESSION_TRASH_ROOT = path.join(APP_DIR, 'session-trash');
 const SESSION_VISIBILITY_BACKUP_ROOT = path.join(APP_DIR, 'session-visibility-backups');
 const DEFAULT_MODEL_PROVIDER = 'openai';
 const DEFAULT_APPROVAL_MODE = 'never';
 const DEFAULT_SANDBOX_POLICY = 'danger-full-access';
+const GLOBAL_STATE_KEYS = Object.freeze({
+  WORKSPACE_ROOT_OPTIONS: 'electron-saved-workspace-roots',
+  WORKSPACE_ROOT_LABELS: 'electron-workspace-root-labels',
+  LOCAL_PROJECTS: 'local-projects',
+  PROJECT_WRITABLE_ROOTS: 'project-writable-roots',
+  THREAD_PROJECT_ASSIGNMENTS: 'thread-project-assignments',
+  PROJECTLESS_THREAD_IDS: 'projectless-thread-ids',
+});
 
 async function exists(file) {
   try {
@@ -66,6 +75,258 @@ function metadataText(value, max = 320) {
 
 function comparablePath(value) {
   return normalizePathText(value, 300)?.toLowerCase() || null;
+}
+
+function objectRecord(value) {
+  return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+}
+
+function comparableName(value) {
+  return normalizeText(value, 160)?.toLowerCase() || null;
+}
+
+function rootPathFromEntry(value) {
+  if (typeof value === 'string') return normalizePathText(value, 320);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return normalizePathText(value.path || value.root || value.dir, 320);
+}
+
+function rootPathsFromValue(value) {
+  const entries = Array.isArray(value)
+    ? value
+    : (Array.isArray(value?.roots) ? value.roots : []);
+  const seen = new Set();
+  const result = [];
+  for (const entry of entries) {
+    const root = rootPathFromEntry(entry);
+    const key = comparablePath(root);
+    if (!root || !key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(root);
+  }
+  return result;
+}
+
+function pathInsideOrEqual(parent, child) {
+  if (!parent || !child) return false;
+  try {
+    return isInside(parent, child);
+  } catch {
+    return false;
+  }
+}
+
+function labelForWorkspaceRoot(labels, root) {
+  const map = objectRecord(labels);
+  const direct = normalizeText(map[root], 120);
+  if (direct) return direct;
+  const wanted = comparablePath(root);
+  for (const [key, value] of Object.entries(map)) {
+    if (comparablePath(key) !== wanted) continue;
+    const label = normalizeText(value, 120);
+    if (label) return label;
+  }
+  return normalizeText(path.basename(root), 120) || root;
+}
+
+function buildCodexProjectCandidates(globalState) {
+  const localProjects = objectRecord(globalState[GLOBAL_STATE_KEYS.LOCAL_PROJECTS]);
+  const writableRoots = objectRecord(globalState[GLOBAL_STATE_KEYS.PROJECT_WRITABLE_ROOTS]);
+  const workspaceLabels = objectRecord(globalState[GLOBAL_STATE_KEYS.WORKSPACE_ROOT_LABELS]);
+  const workspaceRoots = rootPathsFromValue(globalState[GLOBAL_STATE_KEYS.WORKSPACE_ROOT_OPTIONS]);
+  const candidates = [];
+
+  for (const [key, value] of Object.entries(localProjects)) {
+    const project = objectRecord(value);
+    const projectId = normalizeText(project.id || key, 200);
+    if (!projectId) continue;
+    const roots = rootPathsFromValue(writableRoots[projectId] ?? writableRoots[key]);
+    candidates.push({
+      projectId,
+      label: normalizeText(project.name || project.label || projectId, 120) || projectId,
+      isLocalProject: true,
+      path: null,
+      roots,
+    });
+  }
+
+  const seenWorkspaceRoots = new Set();
+  for (const root of workspaceRoots) {
+    const key = comparablePath(root);
+    if (!key || seenWorkspaceRoots.has(key)) continue;
+    seenWorkspaceRoots.add(key);
+    candidates.push({
+      projectId: root,
+      label: labelForWorkspaceRoot(workspaceLabels, root),
+      isLocalProject: false,
+      path: root,
+      roots: [root],
+    });
+  }
+  return candidates;
+}
+
+function inferProjectCandidate(item, candidates) {
+  const cwd = normalizePathText(item?.cwd, 320);
+  const cwdKey = comparablePath(cwd);
+  const projectName = comparableName(item?.project || (cwd ? path.basename(cwd) : null));
+  const scored = [];
+
+  for (const candidate of candidates) {
+    const candidateLabel = comparableName(candidate.label);
+    const candidatePathName = comparableName(candidate.path ? path.basename(candidate.path) : null);
+    let score = 0;
+    let reason = null;
+
+    if (candidate.isLocalProject && projectName && candidateLabel === projectName) {
+      score = 12_000;
+      reason = 'local_project_label';
+    }
+
+    for (const root of candidate.roots || []) {
+      const rootKey = comparablePath(root);
+      if (!cwdKey || !rootKey) continue;
+      if (cwdKey === rootKey) {
+        const rootScore = candidate.isLocalProject ? 11_500 : 9_500;
+        if (rootScore > score) {
+          score = rootScore;
+          reason = 'exact_project_root';
+        }
+      } else if (pathInsideOrEqual(root, cwd)) {
+        const rootScore = (candidate.isLocalProject ? 10_500 : 8_500) + Math.min(rootKey.length, 500);
+        if (rootScore > score) {
+          score = rootScore;
+          reason = 'inside_project_root';
+        }
+      }
+    }
+
+    if (!candidate.isLocalProject && projectName && (candidateLabel === projectName || candidatePathName === projectName)) {
+      const nameScore = 8_000;
+      if (nameScore > score) {
+        score = nameScore;
+        reason = 'workspace_label';
+      }
+    }
+
+    if (score > 0) scored.push({ candidate, score, reason });
+  }
+
+  scored.sort((a, b) => b.score - a.score || String(a.candidate.label).localeCompare(String(b.candidate.label)));
+  if (!scored.length) return { candidate: null, reason: 'no_matching_project', ambiguous: false, alternatives: [] };
+  const top = scored[0];
+  const tied = scored.filter((entry) => entry.score === top.score);
+  if (tied.length > 1) {
+    return {
+      candidate: null,
+      reason: 'ambiguous_project',
+      ambiguous: true,
+      alternatives: tied.slice(0, 4).map((entry) => entry.candidate.label),
+    };
+  }
+  return { ...top, ambiguous: false, alternatives: [] };
+}
+
+function projectAssignmentForItem(item, candidate) {
+  if (candidate.isLocalProject) {
+    return {
+      projectKind: 'local',
+      projectId: candidate.projectId,
+      ...(item.cwd ? { cwd: item.cwd } : {}),
+      pendingCoreUpdate: false,
+    };
+  }
+  return {
+    projectKind: 'local',
+    projectId: candidate.projectId,
+    path: candidate.path,
+    pendingCoreUpdate: Boolean(comparablePath(item.cwd) && comparablePath(item.cwd) !== comparablePath(candidate.path)),
+  };
+}
+
+function decorateProjectAssignment(item, projectState) {
+  if (!projectState) {
+    return {
+      ...item,
+      canRepairProjectAssignment: false,
+      projectAssignmentStatus: 'global_state_unavailable',
+    };
+  }
+  const assignment = objectRecord(projectState.assignments[item.id]);
+  const inferred = inferProjectCandidate(item, projectState.candidates);
+  const assignedCandidate = assignment.projectKind === 'local'
+    ? projectState.candidates.find((candidate) => candidate.projectId === assignment.projectId) || null
+    : null;
+  const projectless = projectState.projectlessThreadIds.has(item.id);
+  const sameProject = Boolean(
+    inferred.candidate
+    && assignment.projectKind === 'local'
+    && assignment.projectId === inferred.candidate.projectId
+  );
+  const repairable = Boolean(
+    !item.archived
+    && item.likelyUserVisibleThread
+    && inferred.candidate
+    && (!sameProject || projectless)
+  );
+  return {
+    ...item,
+    projectless,
+    assignedProjectId: normalizeText(assignment.projectId, 200),
+    assignedProjectLabel: assignedCandidate?.label || null,
+    inferredProjectId: inferred.candidate?.projectId || null,
+    inferredProjectLabel: inferred.candidate?.label || null,
+    projectAssignmentReason: inferred.reason,
+    projectAssignmentAmbiguous: Boolean(inferred.ambiguous),
+    projectAssignmentAlternatives: inferred.alternatives,
+    projectAssignmentStatus: sameProject && !projectless
+      ? 'assigned'
+      : (inferred.ambiguous ? 'ambiguous' : (inferred.candidate ? 'repairable' : 'unmatched')),
+    canRepairProjectAssignment: repairable,
+  };
+}
+
+async function readCodexProjectState(dataDir) {
+  const filePath = path.join(dataDir, CODEX_GLOBAL_STATE_FILE);
+  if (!(await exists(filePath))) throw new Error('Codex global state file was not found');
+  const content = await fs.readFile(filePath, 'utf8');
+  let globalState = null;
+  try {
+    globalState = JSON.parse(content);
+  } catch {
+    throw new Error('Codex global state file is invalid JSON');
+  }
+  if (!globalState || typeof globalState !== 'object' || Array.isArray(globalState)) {
+    throw new Error('Codex global state file is not a JSON object');
+  }
+  const assignments = objectRecord(globalState[GLOBAL_STATE_KEYS.THREAD_PROJECT_ASSIGNMENTS]);
+  const projectlessIds = Array.isArray(globalState[GLOBAL_STATE_KEYS.PROJECTLESS_THREAD_IDS])
+    ? globalState[GLOBAL_STATE_KEYS.PROJECTLESS_THREAD_IDS].map((id) => String(id || '').trim()).filter(Boolean)
+    : [];
+  return {
+    filePath,
+    globalState,
+    assignments,
+    candidates: buildCodexProjectCandidates(globalState),
+    projectlessThreadIds: new Set(projectlessIds),
+  };
+}
+
+async function atomicWriteText(file, content) {
+  const temp = path.join(path.dirname(file), `.${path.basename(file)}.tmp-${process.pid}-${Date.now()}`);
+  try {
+    await fs.writeFile(temp, content, 'utf8');
+    await fs.rename(temp, file);
+  } catch (error) {
+    await fs.rm(temp, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+async function writeCodexProjectState(projectState) {
+  const serialized = JSON.stringify(projectState.globalState);
+  await atomicWriteText(projectState.filePath, serialized);
+  await atomicWriteText(`${projectState.filePath}.bak`, serialized);
 }
 
 function escapeRegExp(value) {
@@ -484,11 +745,12 @@ function sessionItemFromFile(file, indexItem = null) {
 export async function listCodexSessions({ archivedOnly = true } = {}) {
   const startedAt = nowMs();
   const dataDir = path.resolve(codexHome());
-  const [rows, files, index, currentModelProvider] = await Promise.all([
+  const [rows, files, index, currentModelProvider, projectState] = await Promise.all([
     readThreadRows(dataDir),
     collectSessionFiles(dataDir),
     readSessionIndex(dataDir),
     readCurrentModelProvider(dataDir),
+    readCodexProjectState(dataDir).catch(() => null),
   ]);
   const filesById = new Map();
   for (const file of files) {
@@ -500,14 +762,20 @@ export async function listCodexSessions({ archivedOnly = true } = {}) {
   for (const row of rows) {
     const id = String(row.id || '').trim();
     const file = filesById.get(id) || null;
-    const item = decorateVisibility(sessionItemFromRow(row, file, index.get(id) || null), currentModelProvider);
+    const item = decorateProjectAssignment(
+      decorateVisibility(sessionItemFromRow(row, file, index.get(id) || null), currentModelProvider),
+      projectState,
+    );
     if (!item.id) continue;
     seenIds.add(item.id);
     if (!archivedOnly || item.archived) items.push(item);
   }
   for (const file of files) {
     if (file.id && seenIds.has(file.id)) continue;
-    const item = decorateVisibility(sessionItemFromFile(file, index.get(file.id) || null), currentModelProvider);
+    const item = decorateProjectAssignment(
+      decorateVisibility(sessionItemFromFile(file, index.get(file.id) || null), currentModelProvider),
+      projectState,
+    );
     if (!item.id) continue;
     if (!archivedOnly || item.archived) items.push(item);
   }
@@ -523,6 +791,9 @@ export async function listCodexSessions({ archivedOnly = true } = {}) {
     sidebarRefreshableCount: items.filter((item) => item.canRefreshSidebar).length,
     sidebarVisibleCount: items.filter((item) => item.sidebarVisibleInCurrentProvider).length,
     childThreadCount: items.filter((item) => item.isSubagentThread).length,
+    projectStateAvailable: Boolean(projectState),
+    projectCandidateCount: projectState?.candidates.length || 0,
+    projectAssignmentRepairableCount: items.filter((item) => item.canRepairProjectAssignment).length,
     sessions: items,
     startedAt,
     finishedAt: nowMs(),
@@ -1285,6 +1556,145 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
     removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
     note: 'Restart Codex App after refreshing sidebar metadata so its recent-thread/project sidebar cache reloads.',
+  };
+}
+
+export async function repairCodexSessionProjectAssignments({ sessionIds = [] } = {}) {
+  const ids = [...new Set((Array.isArray(sessionIds) ? sessionIds : []).map((id) => String(id || '').trim()).filter(Boolean))];
+  if (!ids.length) {
+    return { ok: false, error: 'No session ids selected', repairedCount: 0 };
+  }
+
+  const dataDir = path.resolve(codexHome());
+  const all = await listCodexSessions({ archivedOnly: false });
+  const byId = new Map(all.sessions.map((item) => [item.id, item]));
+  let projectState = null;
+  try {
+    projectState = await readCodexProjectState(dataDir);
+  } catch (error) {
+    return {
+      ok: false,
+      error: String(error?.message || error),
+      repairedCount: 0,
+    };
+  }
+
+  if (!projectState.candidates.length) {
+    return {
+      ok: false,
+      error: 'No Codex App local projects or saved workspace roots were found',
+      repairedCount: 0,
+    };
+  }
+
+  const selected = [];
+  const rejected = [];
+  for (const id of ids) {
+    const item = byId.get(id);
+    if (!item) {
+      rejected.push({ id: shortId(id), reason: 'not_found' });
+      continue;
+    }
+    if (item.archived) {
+      rejected.push({ id: item.shortId || shortId(id), reason: 'archived' });
+      continue;
+    }
+    if (!isLikelyUserVisibleThread(item)) {
+      rejected.push({ id: item.shortId || shortId(id), reason: 'not_sidebar_main_thread' });
+      continue;
+    }
+    const inferred = inferProjectCandidate(item, projectState.candidates);
+    if (!inferred.candidate) {
+      rejected.push({
+        id: item.shortId || shortId(id),
+        reason: inferred.reason,
+        alternatives: inferred.alternatives,
+      });
+      continue;
+    }
+    const existing = objectRecord(projectState.assignments[item.id]);
+    const projectless = projectState.projectlessThreadIds.has(item.id);
+    if (existing.projectKind === 'local' && existing.projectId === inferred.candidate.projectId && !projectless) {
+      rejected.push({
+        id: item.shortId || shortId(id),
+        reason: 'already_assigned',
+        projectLabel: inferred.candidate.label,
+      });
+      continue;
+    }
+    selected.push({
+      item,
+      candidate: inferred.candidate,
+      reason: inferred.reason,
+      assignment: projectAssignmentForItem(item, inferred.candidate),
+    });
+  }
+
+  if (!selected.length) {
+    return {
+      ok: false,
+      error: 'No sessions need project sidebar assignment repair',
+      repairedCount: 0,
+      rejected,
+    };
+  }
+
+  const backupDir = await createVisibilityBackupDir();
+  const globalStateBackups = [];
+  for (const name of [CODEX_GLOBAL_STATE_FILE, `${CODEX_GLOBAL_STATE_FILE}.bak`]) {
+    const copied = await copyIfExists(path.join(dataDir, name), path.join(backupDir, name));
+    if (copied) globalStateBackups.push(name);
+  }
+
+  const assignments = { ...projectState.assignments };
+  const repairedIds = new Set();
+  for (const entry of selected) {
+    assignments[entry.item.id] = entry.assignment;
+    repairedIds.add(entry.item.id);
+  }
+  projectState.globalState[GLOBAL_STATE_KEYS.THREAD_PROJECT_ASSIGNMENTS] = assignments;
+  projectState.globalState[GLOBAL_STATE_KEYS.PROJECTLESS_THREAD_IDS] = [
+    ...projectState.projectlessThreadIds,
+  ].filter((id) => !repairedIds.has(id));
+  await writeCodexProjectState(projectState);
+
+  await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
+    createdAt: new Date().toISOString(),
+    codexDataRoot: 'CODEX_HOME',
+    requestedCount: ids.length,
+    repairedCount: selected.length,
+    changedGlobalStateKeys: [
+      GLOBAL_STATE_KEYS.THREAD_PROJECT_ASSIGNMENTS,
+      GLOBAL_STATE_KEYS.PROJECTLESS_THREAD_IDS,
+    ],
+    globalStateBackups,
+    repairedSessions: selected.map((entry) => ({
+      id: entry.item.id,
+      shortId: entry.item.shortId,
+      project: entry.item.project || null,
+      projectLabel: entry.candidate.label,
+      projectId: entry.candidate.projectId,
+      projectKind: entry.candidate.isLocalProject ? 'local_project' : 'workspace_root',
+      matchReason: entry.reason,
+    })),
+    rejected,
+    note: 'Project assignment repair mirrors Codex App sidebar move behavior by updating thread-project-assignments and removing repaired ids from projectless-thread-ids. Prompt/content/token bodies are not copied or exposed.',
+  }, null, 2)}\n`, 'utf8');
+
+  return {
+    ok: true,
+    repairedCount: selected.length,
+    requestedCount: ids.length,
+    rejected,
+    assignedProjects: selected.map((entry) => ({
+      id: entry.item.shortId || shortId(entry.item.id),
+      projectLabel: entry.candidate.label,
+      projectKind: entry.candidate.isLocalProject ? 'local_project' : 'workspace_root',
+      matchReason: entry.reason,
+    })),
+    removedProjectlessCount: selected.filter((entry) => projectState.projectlessThreadIds.has(entry.item.id)).length,
+    backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
+    note: 'Restart Codex App after project assignment repair. This mirrors Codex App thread drag/drop project assignment and does not restart Codex App automatically.',
   };
 }
 
