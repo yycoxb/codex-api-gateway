@@ -5,9 +5,12 @@ import { pipeline } from 'node:stream/promises';
 import { DatabaseSync } from 'node:sqlite';
 import { APP_DIR } from './constants.js';
 import { codexHome } from './account.js';
+import { rebuildOfficialCodexThreadMetadata } from './codex-official-app-server.js';
 import { nowMs } from './utils.js';
 
 const STATE_DB_FILE = 'state_5.sqlite';
+const SQLITE_DIR_NAME = 'sqlite';
+const PREFERRED_SQLITE_DB_FILE = 'codex-dev.db';
 const CONFIG_FILE = 'config.toml';
 const SESSION_INDEX_FILE = 'session_index.jsonl';
 const CODEX_GLOBAL_STATE_FILE = '.codex-global-state.json';
@@ -15,8 +18,6 @@ const SESSION_DIRS = ['sessions', 'archived_sessions'];
 const SESSION_TRASH_ROOT = path.join(APP_DIR, 'session-trash');
 const SESSION_VISIBILITY_BACKUP_ROOT = path.join(APP_DIR, 'session-visibility-backups');
 const DEFAULT_MODEL_PROVIDER = 'openai';
-const DEFAULT_APPROVAL_MODE = 'never';
-const DEFAULT_SANDBOX_POLICY = 'danger-full-access';
 const GLOBAL_STATE_KEYS = Object.freeze({
   WORKSPACE_ROOT_OPTIONS: 'electron-saved-workspace-roots',
   WORKSPACE_ROOT_LABELS: 'electron-workspace-root-labels',
@@ -33,6 +34,65 @@ async function exists(file) {
   } catch {
     return false;
   }
+}
+
+function sqliteSidecarPaths(dbPath) {
+  return [`${dbPath}-wal`, `${dbPath}-shm`];
+}
+
+function sqliteRelativePath(dataDir, dbPath) {
+  return path.relative(dataDir, dbPath);
+}
+
+function isSqliteCandidateName(name) {
+  return ['.db', '.sqlite', '.sqlite3'].includes(path.extname(String(name || '')).toLowerCase());
+}
+
+function hasThreadsTable(dbPath) {
+  let db = null;
+  try {
+    db = new DatabaseSync(dbPath, { readOnly: true });
+    return Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads' LIMIT 1").get());
+  } catch {
+    return false;
+  } finally {
+    try { db?.close(); } catch {}
+  }
+}
+
+async function codexSessionDbPaths(dataDir) {
+  const candidates = [];
+  const sqliteDir = path.join(dataDir, SQLITE_DIR_NAME);
+  const entries = await fs.readdir(sqliteDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (!entry.isFile() || !isSqliteCandidateName(entry.name)) continue;
+    const dbPath = path.join(sqliteDir, entry.name);
+    if (hasThreadsTable(dbPath)) candidates.push(dbPath);
+  }
+  candidates.sort((a, b) => {
+    const aPreferred = path.basename(a).toLowerCase() === PREFERRED_SQLITE_DB_FILE;
+    const bPreferred = path.basename(b).toLowerCase() === PREFERRED_SQLITE_DB_FILE;
+    if (aPreferred !== bPreferred) return aPreferred ? -1 : 1;
+    return a.localeCompare(b);
+  });
+
+  const legacy = path.join(dataDir, STATE_DB_FILE);
+  if (await exists(legacy) && hasThreadsTable(legacy)) candidates.push(legacy);
+  return [...new Set(candidates)];
+}
+
+async function backupSqliteDatabases(dataDir, backupDir) {
+  const backedUp = [];
+  for (const dbPath of await codexSessionDbPaths(dataDir)) {
+    const relative = sqliteRelativePath(dataDir, dbPath);
+    if (await copyIfExists(dbPath, path.join(backupDir, relative))) backedUp.push(relative);
+    for (const sidecar of sqliteSidecarPaths(dbPath)) {
+      if (await copyIfExists(sidecar, path.join(backupDir, sqliteRelativePath(dataDir, sidecar)))) {
+        backedUp.push(sqliteRelativePath(dataDir, sidecar));
+      }
+    }
+  }
+  return backedUp;
 }
 
 function timestampForPath() {
@@ -600,8 +660,7 @@ async function collectSessionFiles(dataDir) {
   return files;
 }
 
-function rowsFromSqlite(dataDir) {
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
+function rowsFromSqlite(dbPath) {
   const db = new DatabaseSync(dbPath, { readOnly: true });
   try {
     db.exec('PRAGMA busy_timeout = 3000');
@@ -619,13 +678,20 @@ function rowsFromSqlite(dataDir) {
 }
 
 async function readThreadRows(dataDir) {
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
-  if (!(await exists(dbPath))) return [];
-  try {
-    return rowsFromSqlite(dataDir);
-  } catch {
-    return [];
+  const rowsById = new Map();
+  for (const dbPath of await codexSessionDbPaths(dataDir)) {
+    let rows = [];
+    try {
+      rows = rowsFromSqlite(dbPath);
+    } catch {
+      continue;
+    }
+    for (const row of rows) {
+      const id = String(row?.id || '').trim();
+      if (id && !rowsById.has(id)) rowsById.set(id, row);
+    }
   }
+  return [...rowsById.values()].sort((a, b) => timestampMs(b, 'updated') - timestampMs(a, 'updated'));
 }
 
 function effectiveProvider(item) {
@@ -822,8 +888,7 @@ async function moveFileToTrash(dataDir, trashDir, file) {
   return path.relative(trashDir, target);
 }
 
-function deleteRowsFromSqlite(dataDir, ids) {
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
+function deleteRowsFromSqlite(dbPath, ids) {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA busy_timeout = 3000');
@@ -840,6 +905,22 @@ function deleteRowsFromSqlite(dataDir, ids) {
   } finally {
     db.close();
   }
+}
+
+async function deleteRowsFromAllSqlite(dataDir, ids) {
+  let changes = 0;
+  const databases = [];
+  const skipped = [];
+  for (const dbPath of await codexSessionDbPaths(dataDir)) {
+    const relative = sqliteRelativePath(dataDir, dbPath);
+    try {
+      changes += deleteRowsFromSqlite(dbPath, ids);
+      databases.push(relative);
+    } catch (error) {
+      skipped.push({ database: relative, reason: String(error?.message || error).slice(0, 160) });
+    }
+  }
+  return { changes, databases, skipped };
 }
 
 async function rewriteSessionIndex(dataDir, ids, trashDir) {
@@ -895,34 +976,6 @@ async function createVisibilityBackupDir() {
   return dir;
 }
 
-function quoteSqliteIdent(name) {
-  return `"${String(name).replace(/"/g, '""')}"`;
-}
-
-function sqliteSessionColumnValue(item, targetProvider, columnName) {
-  const name = String(columnName || '').toLowerCase();
-  const updatedMs = Number(item.updatedAt || Date.now());
-  const createdMs = Number(item.createdAt || item.updatedAt || updatedMs);
-  const source = normalizeText(item.source || item.fileSource, 80) || 'file';
-  if (name === 'id') return item.id;
-  if (name === 'title' || name === 'thread_name' || name === 'name') return item.title || item.shortId || item.id;
-  if (name === 'cwd' || name === 'workspace' || name === 'workspace_path') return item.cwd || '';
-  if (name === 'source') return source;
-  if (name === 'thread_source') return item.threadSource || (isLikelyUserVisibleThread(item) ? 'user' : source);
-  if (name === 'model_provider' || name === 'provider') return targetProvider;
-  if (name === 'rollout_path') return item.rolloutPath || item.fileRelativePath || '';
-  if (name === 'approval_mode' || name === 'approval_policy') return item.approvalMode || DEFAULT_APPROVAL_MODE;
-  if (name === 'sandbox_policy' || name === 'sandbox_mode') return item.sandboxPolicy || DEFAULT_SANDBOX_POLICY;
-  if (name === 'archived' || name === 'is_archived') return 0;
-  if (name === 'has_user_event') return isLikelyUserVisibleThread(item) ? 1 : 0;
-  if (name === 'first_user_message' || name === 'preview') return item.title || item.shortId || item.id;
-  if (name === 'created_at_ms') return Number.isFinite(createdMs) && createdMs > 0 ? createdMs : Date.now();
-  if (name === 'updated_at_ms') return Number.isFinite(updatedMs) && updatedMs > 0 ? updatedMs : Date.now();
-  if (name === 'created_at') return Math.floor((Number.isFinite(createdMs) && createdMs > 0 ? createdMs : Date.now()) / 1000);
-  if (name === 'updated_at') return Math.floor((Number.isFinite(updatedMs) && updatedMs > 0 ? updatedMs : Date.now()) / 1000);
-  return undefined;
-}
-
 function sidebarSourceForItem(item) {
   return isLikelyUserVisibleThread(item) ? 'vscode' : (normalizeText(item.source || item.fileSource, 80) || 'file');
 }
@@ -942,8 +995,7 @@ function normalizedSidebarRolloutPath(item) {
   return rolloutPath || '';
 }
 
-function syncSqliteSessions(dataDir, selected, targetProvider) {
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
+function syncSqliteSessions(dbPath, selected, targetProvider) {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA busy_timeout = 3000');
@@ -987,32 +1039,11 @@ function syncSqliteSessions(dataDir, selected, targetProvider) {
       }
     }
 
-    let inserted = 0;
-    const skipped = [];
-    for (const item of missing) {
-      const values = new Map();
-      for (const column of columns) {
-        const name = String(column.name || '');
-        const value = sqliteSessionColumnValue(item, targetProvider, name);
-        if (value !== undefined) values.set(name, value);
-      }
-      const missingRequired = columns
-        .filter((column) => !column.pk && column.notnull && column.dflt_value == null)
-        .map((column) => String(column.name || ''))
-        .filter((name) => !values.has(name) || values.get(name) == null);
-      if (!values.has('id') || missingRequired.length) {
-        skipped.push({
-          id: item.shortId || shortId(item.id),
-          reason: 'unsupported_sqlite_schema',
-          missingColumns: missingRequired,
-        });
-        continue;
-      }
-      const names = [...values.keys()];
-      const stmt = db.prepare(`INSERT INTO threads (${names.map(quoteSqliteIdent).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`);
-      const info = stmt.run(...names.map((name) => values.get(name)));
-      inserted += Number(info.changes || 0);
-    }
+    const inserted = 0;
+    const skipped = missing.map((item) => ({
+      id: item.shortId || shortId(item.id),
+      reason: 'missing_from_database_official_rebuild_required',
+    }));
 
     return { updated, inserted, skipped };
   } finally {
@@ -1020,8 +1051,7 @@ function syncSqliteSessions(dataDir, selected, targetProvider) {
   }
 }
 
-function syncSqliteSidebarMetadata(dataDir, selected, targetProvider, touchAtMs = Date.now()) {
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
+function syncSqliteSidebarMetadata(dbPath, selected, targetProvider, touchAtMs = Date.now()) {
   const db = new DatabaseSync(dbPath);
   try {
     db.exec('PRAGMA busy_timeout = 3000');
@@ -1035,28 +1065,10 @@ function syncSqliteSidebarMetadata(dataDir, selected, targetProvider, touchAtMs 
 
     for (const item of selected) {
       if (!existingStmt.get(item.id)) {
-        const values = new Map();
-        for (const column of columns) {
-          const name = String(column.name || '');
-          const value = sqliteSessionColumnValue(item, targetProvider, name);
-          if (value !== undefined) values.set(name, value);
-        }
-        const missingRequired = columns
-          .filter((column) => !column.pk && column.notnull && column.dflt_value == null)
-          .map((column) => String(column.name || ''))
-          .filter((name) => !values.has(name) || values.get(name) == null);
-        if (!values.has('id') || missingRequired.length) {
-          skipped.push({
-            id: item.shortId || shortId(item.id),
-            reason: 'unsupported_sqlite_schema',
-            missingColumns: missingRequired,
-          });
-          continue;
-        }
-        const names = [...values.keys()];
-        const stmt = db.prepare(`INSERT INTO threads (${names.map(quoteSqliteIdent).join(', ')}) VALUES (${names.map(() => '?').join(', ')})`);
-        const info = stmt.run(...names.map((name) => values.get(name)));
-        inserted += Number(info.changes || 0);
+        skipped.push({
+          id: item.shortId || shortId(item.id),
+          reason: 'missing_from_database_official_rebuild_required',
+        });
         continue;
       }
 
@@ -1114,6 +1126,29 @@ function syncSqliteSidebarMetadata(dataDir, selected, targetProvider, touchAtMs 
   } finally {
     db.close();
   }
+}
+
+async function syncAllSqliteDatabases(dataDir, operation) {
+  const result = { updated: 0, inserted: 0, skipped: [], databases: [] };
+  for (const dbPath of await codexSessionDbPaths(dataDir)) {
+    const relative = sqliteRelativePath(dataDir, dbPath);
+    try {
+      const current = operation(dbPath);
+      result.updated += Number(current?.updated || 0);
+      result.inserted += Number(current?.inserted || 0);
+      result.skipped.push(...(Array.isArray(current?.skipped) ? current.skipped.map((item) => ({
+        ...item,
+        database: relative,
+      })) : []));
+      result.databases.push(relative);
+    } catch (error) {
+      result.skipped.push({
+        database: relative,
+        reason: String(error?.message || error).slice(0, 160),
+      });
+    }
+  }
+  return result;
 }
 
 async function rewriteRolloutProvider(file, targetProvider) {
@@ -1379,20 +1414,17 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
   }
 
   const backupDir = await createVisibilityBackupDir();
-  const sqliteBackups = [];
-  for (const name of [STATE_DB_FILE, `${STATE_DB_FILE}-wal`, `${STATE_DB_FILE}-shm`]) {
-    const copied = await copyIfExists(path.join(dataDir, name), path.join(backupDir, name));
-    if (copied) sqliteBackups.push(name);
-  }
+  const sqliteBackups = await backupSqliteDatabases(dataDir, backupDir);
 
-  let sqliteSync = { updated: 0, inserted: 0, skipped: [] };
+  let sqliteSync = { updated: 0, inserted: 0, skipped: [], databases: [] };
   const selectedIds = selected.map((item) => item.id);
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
-  if (await exists(dbPath)) {
-    sqliteSync = syncSqliteSessions(dataDir, selected, currentModelProvider);
-  }
+  sqliteSync = await syncAllSqliteDatabases(
+    dataDir,
+    (dbPath) => syncSqliteSessions(dbPath, selected, currentModelProvider),
+  );
   const rolloutChanges = await repairRolloutProviders(filesById, selectedIds, dataDir, backupDir, currentModelProvider);
   const sessionIndex = await rewriteSessionIndexProviders(dataDir, selected, backupDir, currentModelProvider);
+  const officialMetadataRebuild = await rebuildOfficialCodexThreadMetadata({ dataDir });
 
   await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
     createdAt: new Date().toISOString(),
@@ -1420,6 +1452,7 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     rejected,
     sqliteBackups,
     sqliteSync,
+    officialMetadataRebuild,
     updatedRolloutFileCount: rolloutChanges.length,
     sessionIndex,
     note: 'Session visibility repair only updates Codex sidebar metadata (provider, index, cwd, archived flag, and missing thread rows). Prompt/content/token bodies are not copied or exposed.',
@@ -1434,10 +1467,12 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     updatedSqliteRows: sqliteSync.updated,
     insertedSqliteRows: sqliteSync.inserted,
     skippedSqliteRows: sqliteSync.skipped,
+    sqliteDatabases: sqliteSync.databases,
     updatedRolloutFileCount: rolloutChanges.length,
     updatedSessionIndexRows: sessionIndex.updated,
     insertedSessionIndexRows: sessionIndex.inserted,
     removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
+    officialMetadataRebuild,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
   };
 }
@@ -1493,21 +1528,17 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
 
   const backupDir = await createVisibilityBackupDir();
   const sidebarTouchAtMs = Date.now();
-  const sqliteBackups = [];
-  for (const name of [STATE_DB_FILE, `${STATE_DB_FILE}-wal`, `${STATE_DB_FILE}-shm`]) {
-    const copied = await copyIfExists(path.join(dataDir, name), path.join(backupDir, name));
-    if (copied) sqliteBackups.push(name);
-  }
+  const sqliteBackups = await backupSqliteDatabases(dataDir, backupDir);
 
-  let sqliteSync = { updated: 0, inserted: 0, skipped: [] };
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
-  if (await exists(dbPath)) {
-    sqliteSync = syncSqliteSidebarMetadata(dataDir, selected, currentModelProvider, sidebarTouchAtMs);
-  }
+  const sqliteSync = await syncAllSqliteDatabases(
+    dataDir,
+    (dbPath) => syncSqliteSidebarMetadata(dbPath, selected, currentModelProvider, sidebarTouchAtMs),
+  );
 
   const selectedIds = selected.map((item) => item.id);
   const rolloutChanges = await repairRolloutProviders(filesById, selectedIds, dataDir, backupDir, currentModelProvider);
   const sessionIndex = await rewriteSessionIndexSidebarMetadata(dataDir, selected, backupDir, currentModelProvider, sidebarTouchAtMs);
+  const officialMetadataRebuild = await rebuildOfficialCodexThreadMetadata({ dataDir });
 
   await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
     createdAt: new Date().toISOString(),
@@ -1534,6 +1565,7 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
     rejected,
     sqliteBackups,
     sqliteSync,
+    officialMetadataRebuild,
     sidebarTouchAtMs,
     updatedRolloutFileCount: rolloutChanges.length,
     sessionIndex,
@@ -1549,13 +1581,17 @@ export async function repairCodexSessionSidebar({ sessionIds = [], targetProvide
     updatedSqliteRows: sqliteSync.updated,
     insertedSqliteRows: sqliteSync.inserted,
     skippedSqliteRows: sqliteSync.skipped,
+    sqliteDatabases: sqliteSync.databases,
     sidebarTouchAtMs,
     updatedRolloutFileCount: rolloutChanges.length,
     updatedSessionIndexRows: sessionIndex.updated,
     insertedSessionIndexRows: sessionIndex.inserted,
     removedDuplicateSessionIndexRows: sessionIndex.removedDuplicateRows || 0,
+    officialMetadataRebuild,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
-    note: 'Restart Codex App after refreshing sidebar metadata so its recent-thread/project sidebar cache reloads.',
+    note: officialMetadataRebuild.ok
+      ? 'Official Codex app-server rebuilt thread metadata; no Gateway restart was performed.'
+      : 'Official Codex app-server metadata rebuild failed; no Gateway or Codex App restart was performed.',
   };
 }
 
@@ -1657,6 +1693,7 @@ export async function repairCodexSessionProjectAssignments({ sessionIds = [] } =
     ...projectState.projectlessThreadIds,
   ].filter((id) => !repairedIds.has(id));
   await writeCodexProjectState(projectState);
+  const officialMetadataRebuild = await rebuildOfficialCodexThreadMetadata({ dataDir });
 
   await fs.writeFile(path.join(backupDir, 'manifest.json'), `${JSON.stringify({
     createdAt: new Date().toISOString(),
@@ -1678,6 +1715,7 @@ export async function repairCodexSessionProjectAssignments({ sessionIds = [] } =
       matchReason: entry.reason,
     })),
     rejected,
+    officialMetadataRebuild,
     note: 'Project assignment repair mirrors Codex App sidebar move behavior by updating thread-project-assignments and removing repaired ids from projectless-thread-ids. Prompt/content/token bodies are not copied or exposed.',
   }, null, 2)}\n`, 'utf8');
 
@@ -1693,8 +1731,11 @@ export async function repairCodexSessionProjectAssignments({ sessionIds = [] } =
       matchReason: entry.reason,
     })),
     removedProjectlessCount: selected.filter((entry) => projectState.projectlessThreadIds.has(entry.item.id)).length,
+    officialMetadataRebuild,
     backupLocation: path.join('session-visibility-backups', path.basename(backupDir)),
-    note: 'Restart Codex App after project assignment repair. This mirrors Codex App thread drag/drop project assignment and does not restart Codex App automatically.',
+    note: officialMetadataRebuild.ok
+      ? 'Project assignment was updated and official Codex app-server rebuilt thread metadata; no restart was performed.'
+      : 'Project assignment was updated, but official Codex app-server metadata rebuild failed; no restart was performed.',
   };
 }
 
@@ -1732,12 +1773,7 @@ export async function deleteCodexSessions({ sessionIds = [] } = {}) {
 
   const trashDir = await createTrashDir();
   const movedFiles = [];
-  const dbPath = path.join(dataDir, STATE_DB_FILE);
-  const sqliteBackups = [];
-  for (const name of [STATE_DB_FILE, `${STATE_DB_FILE}-wal`, `${STATE_DB_FILE}-shm`]) {
-    const copied = await copyIfExists(path.join(dataDir, name), path.join(trashDir, name));
-    if (copied) sqliteBackups.push(name);
-  }
+  const sqliteBackups = await backupSqliteDatabases(dataDir, trashDir);
 
   for (const item of selected) {
     const file = filesById.get(item.id);
@@ -1745,11 +1781,10 @@ export async function deleteCodexSessions({ sessionIds = [] } = {}) {
     if (moved) movedFiles.push(moved);
   }
 
-  let deletedRows = 0;
-  if (await exists(dbPath)) {
-    deletedRows = deleteRowsFromSqlite(dataDir, selected.map((item) => item.id));
-  }
+  const sqliteDelete = await deleteRowsFromAllSqlite(dataDir, selected.map((item) => item.id));
+  const deletedRows = sqliteDelete.changes;
   const index = await rewriteSessionIndex(dataDir, selected.map((item) => item.id), trashDir);
+  const officialMetadataRebuild = await rebuildOfficialCodexThreadMetadata({ dataDir });
 
   await fs.writeFile(path.join(trashDir, 'manifest.json'), `${JSON.stringify({
     createdAt: new Date().toISOString(),
@@ -1760,8 +1795,10 @@ export async function deleteCodexSessions({ sessionIds = [] } = {}) {
     rejected,
     movedFiles,
     sqliteBackups,
+    sqliteDelete,
     deletedRows,
     sessionIndexRemoved: index.removed,
+    officialMetadataRebuild,
     note: 'Archived sessions were removed from Codex state after this backup. Prompt/content/token bodies are not exposed by the Gateway UI.',
   }, null, 2)}\n`, 'utf8');
 
@@ -1772,7 +1809,10 @@ export async function deleteCodexSessions({ sessionIds = [] } = {}) {
     rejected,
     movedFileCount: movedFiles.length,
     deletedRows,
+    sqliteDatabases: sqliteDelete.databases,
+    skippedSqliteRows: sqliteDelete.skipped,
     sessionIndexRemoved: index.removed,
+    officialMetadataRebuild,
     backupLocation: path.join('session-trash', path.basename(trashDir)),
   };
 }

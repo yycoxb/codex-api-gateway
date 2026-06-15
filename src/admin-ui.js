@@ -6024,7 +6024,7 @@ async function repairSelectedSessionsVisibility() {
   const provider = state.sessionsCurrentProvider || '\u5f53\u524d provider';
   const confirmMessage = '\u786e\u5b9a\u628a\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u540c\u6b65\u5230 ' + provider + ' \u5417\uff1f'
     + String.fromCharCode(10, 10)
-    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u4fee\u6539 provider/index/cwd \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+    + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u4fee\u6539 provider/index/cwd \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff0c\u6700\u540e\u8c03\u7528\u5b98\u65b9 Codex app-server \u91cd\u5efa\u4fa7\u680f\u7d22\u5f15\uff1b\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
   if (!confirm(confirmMessage)) return;
   const res = await fetch('/_admin/sessions/repair-visibility', {
     method: 'POST',
@@ -6040,7 +6040,7 @@ async function repairSelectedSessionsVisibility() {
     toast(data.error || '\u4fee\u590d\u53ef\u89c1\u6027\u5931\u8d25');
     return;
   }
-  toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u53ef\u89c1\u6027');
+  toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u53ef\u89c1\u6027\uff1b\u5b98\u65b9\u7d22\u5f15\u91cd\u5efa' + (data.officialMetadataRebuild && data.officialMetadataRebuild.ok ? '\u6210\u529f' : '\u5931\u8d25'));
   state.selectedSessionIds.clear();
   await loadSessions();
 }
@@ -6052,7 +6052,7 @@ async function repairSelectedSessionsSidebar() {
   const confirmMessage = '\u786e\u5b9a\u540c\u6b65\u9009\u4e2d\u7684 ' + selected.length + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u663e\u793a\u5143\u4fe1\u606f\u5230 ' + provider + ' \u5417\uff1f'
     + String.fromCharCode(10, 10)
     + '\u4f1a\u5148\u5907\u4efd SQLite \u72b6\u6001\u6570\u636e\u5e93\u548c session_index\uff0c\u518d\u53ea\u540c\u6b65 provider/source/cwd/preview/updated_at \u7b49\u4f1a\u8bdd\u5143\u4fe1\u606f\uff1b'
-    + '\u5237\u65b0 updated_at \u662f\u4e3a\u4e86\u8ba9 Codex App \u6700\u8fd1\u7ebf\u7a0b/\u9879\u76ee\u4fa7\u680f\u7d22\u5f15\u91cd\u65b0\u6536\u5f55\u3002\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
+    + '\u5237\u65b0 updated_at \u540e\u4f1a\u8c03\u7528\u5b98\u65b9 Codex app-server \u7684 thread/list \u91cd\u5efa\u4fa7\u680f\u7d22\u5f15\u3002\u4e0d\u4f1a\u5c55\u793a\u6216\u8bb0\u5f55 prompt/content/token\u3002';
   if (!confirm(confirmMessage)) return;
   const res = await fetch('/_admin/sessions/repair-sidebar', {
     method: 'POST',
@@ -6068,7 +6068,7 @@ async function repairSelectedSessionsSidebar() {
     toast(data.error || '\u540c\u6b65\u4fa7\u680f\u663e\u793a\u5931\u8d25');
     return;
   }
-  toast('\u5df2\u540c\u6b65 ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u5143\u4fe1\u606f\uff0c\u5df2\u5237\u65b0\u4fa7\u680f\u7d22\u5f15\u65f6\u95f4');
+  toast('\u5df2\u540c\u6b65 ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u4fa7\u680f\u5143\u4fe1\u606f\uff1b\u5b98\u65b9\u7d22\u5f15\u91cd\u5efa' + (data.officialMetadataRebuild && data.officialMetadataRebuild.ok ? '\u6210\u529f' : '\u5931\u8d25'));
   state.selectedSessionIds.clear();
   await loadSessions();
 }
@@ -6094,7 +6094,7 @@ async function repairSelectedSessionsProjectAssignment() {
     toast(data.error || '\u4fee\u590d\u9879\u76ee\u7ed1\u5b9a\u5931\u8d25');
     return;
   }
-  toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u9879\u76ee\u7ed1\u5b9a\uff0c\u8bf7\u91cd\u542f Codex App \u540e\u67e5\u770b');
+  toast('\u5df2\u4fee\u590d ' + data.repairedCount + ' \u4e2a\u4f1a\u8bdd\u9879\u76ee\u7ed1\u5b9a\uff1b\u5b98\u65b9\u7d22\u5f15\u91cd\u5efa' + (data.officialMetadataRebuild && data.officialMetadataRebuild.ok ? '\u6210\u529f' : '\u5931\u8d25'));
   state.selectedSessionIds.clear();
   await loadSessions();
 }
@@ -6117,7 +6117,7 @@ async function deleteSelectedSessions() {
     toast(data.error || '\u5220\u9664\u4f1a\u8bdd\u5931\u8d25');
     return;
   }
-  toast('\u5df2\u5220\u9664 ' + data.deletedCount + ' \u4e2a\u5f52\u6863\u4f1a\u8bdd');
+  toast('\u5df2\u5220\u9664 ' + data.deletedCount + ' \u4e2a\u5f52\u6863\u4f1a\u8bdd\uff1b\u5b98\u65b9\u7d22\u5f15\u91cd\u5efa' + (data.officialMetadataRebuild && data.officialMetadataRebuild.ok ? '\u6210\u529f' : '\u5931\u8d25'));
   state.selectedSessionIds.clear();
   await loadSessions();
 }

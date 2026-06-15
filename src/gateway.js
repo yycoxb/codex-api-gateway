@@ -369,37 +369,60 @@ function threadDiagnosticsFromRow(row, startedAt) {
   };
 }
 
-function lookupRecentCodexThread(startedAt = Date.now()) {
-  const dbPath = path.join(codexHome(), 'state_5.sqlite');
-  if (!fs.existsSync(dbPath)) return { lookup: 'not_found' };
-  let db = null;
+function codexThreadDbPaths() {
+  const dataDir = codexHome();
+  const result = [];
+  const sqliteDir = path.join(dataDir, 'sqlite');
   try {
-    db = new DatabaseSync(dbPath, { readOnly: true });
-    const rows = db.prepare(`
-      SELECT id, title, cwd, source, model_provider, updated_at, updated_at_ms, thread_source
-      FROM threads
-      WHERE COALESCE(archived, 0) = 0
-      ORDER BY COALESCE(updated_at_ms, updated_at * 1000, created_at_ms, 0) DESC
-      LIMIT 12
-    `).all();
-    let best = null;
-    let bestDistance = Infinity;
-    for (const row of rows) {
-      const updatedAtMs = rowUpdatedAtMs(row);
-      if (!updatedAtMs) continue;
-      const distance = Math.abs(startedAt - updatedAtMs);
-      if (distance < bestDistance) {
-        best = row;
-        bestDistance = distance;
+    const names = fs.readdirSync(sqliteDir)
+      .filter((name) => ['.db', '.sqlite', '.sqlite3'].includes(path.extname(name).toLowerCase()))
+      .sort((a, b) => {
+        const aPreferred = a.toLowerCase() === 'codex-dev.db';
+        const bPreferred = b.toLowerCase() === 'codex-dev.db';
+        return aPreferred === bPreferred ? a.localeCompare(b) : (aPreferred ? -1 : 1);
+      });
+    for (const name of names) result.push(path.join(sqliteDir, name));
+  } catch {}
+  result.push(path.join(dataDir, 'state_5.sqlite'));
+  return [...new Set(result)].filter((dbPath) => fs.existsSync(dbPath));
+}
+
+function lookupRecentCodexThread(startedAt = Date.now()) {
+  let best = null;
+  let bestDistance = Infinity;
+  let opened = 0;
+  for (const dbPath of codexThreadDbPaths()) {
+    let db = null;
+    try {
+      db = new DatabaseSync(dbPath, { readOnly: true });
+      const hasThreads = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'threads' LIMIT 1").get();
+      if (!hasThreads) continue;
+      opened += 1;
+      const rows = db.prepare(`
+        SELECT id, title, cwd, source, model_provider, updated_at, updated_at_ms, thread_source
+        FROM threads
+        WHERE COALESCE(archived, 0) = 0
+        ORDER BY COALESCE(updated_at_ms, updated_at * 1000, created_at_ms, 0) DESC
+        LIMIT 12
+      `).all();
+      for (const row of rows) {
+        const updatedAtMs = rowUpdatedAtMs(row);
+        if (!updatedAtMs) continue;
+        const distance = Math.abs(startedAt - updatedAtMs);
+        if (distance < bestDistance) {
+          best = row;
+          bestDistance = distance;
+        }
       }
+    } catch {
+      continue;
+    } finally {
+      try { db?.close(); } catch {}
     }
-    if (!best || bestDistance > CODEX_THREAD_LOOKUP_WINDOW_MS) return { lookup: 'not_found' };
-    return threadDiagnosticsFromRow(best, startedAt);
-  } catch {
-    return { lookup: 'failed' };
-  } finally {
-    try { db?.close(); } catch {}
   }
+  if (!opened) return { lookup: 'not_found' };
+  if (!best || bestDistance > CODEX_THREAD_LOOKUP_WINDOW_MS) return { lookup: 'not_found' };
+  return threadDiagnosticsFromRow(best, startedAt);
 }
 
 function endpointPort(value) {
