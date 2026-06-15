@@ -218,11 +218,23 @@ function modelProviderFromMeta(parsed) {
 
 function sourceScalar(value) {
   if (!value) return null;
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return sourceLooksSubagent(value) ? 'subagent' : value;
   if (typeof value === 'object') {
+    if (value.subagent || value.thread_spawn) return 'subagent';
     return value.type || value.name || value.id || value.label || value.originator || null;
   }
   return null;
+}
+
+function sourceLooksSubagent(value) {
+  return /subagent|thread_spawn/i.test(String(value || ''));
+}
+
+function isLikelyUserVisibleThread(item) {
+  if (!item || item.archived) return false;
+  const candidates = [item.threadSource, item.source, item.fileSource].filter(Boolean);
+  if (candidates.some(sourceLooksSubagent)) return false;
+  return candidates.some((value) => /^(user|vscode|cli)$/i.test(String(value || '').trim()));
 }
 
 function sourceFromMeta(parsed) {
@@ -381,8 +393,10 @@ function decorateVisibility(item, currentModelProvider) {
     indexCwdMissing,
     indexCwdMismatch,
     sqliteMissing,
-    visibleInCurrentProvider: Boolean(!archived && !visibilityMismatch),
-    canRepairVisibility: Boolean(!archived && (item.threadRowExists || item.fileExists) && visibilityMismatch),
+    userEventMissing: Boolean(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent),
+    likelyUserVisibleThread: isLikelyUserVisibleThread(item),
+    visibleInCurrentProvider: Boolean(!archived && !visibilityMismatch && !(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent)),
+    canRepairVisibility: Boolean(!archived && (item.threadRowExists || (item.fileExists && isLikelyUserVisibleThread(item))) && (visibilityMismatch || (item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent))),
     visibilityStatus: archived ? 'archived' : (visibilityMismatch ? 'metadata_mismatch' : 'visible'),
   };
 }
@@ -398,7 +412,8 @@ function sessionItemFromRow(row, file, indexItem = null) {
     title: indexItem?.title || normalizeText(row.title, 120) || file?.title || '未命名会话',
     cwd,
     project: cwd ? normalizeText(path.basename(cwd), 80) : null,
-    source: normalizeText(row.source || row.thread_source, 60) || indexItem?.source || file?.source || null,
+    source: normalizeText(sourceScalar(row.source) || sourceScalar(row.thread_source), 60) || indexItem?.source || file?.source || null,
+    threadSource: normalizeText(sourceScalar(row.thread_source), 80) || null,
     modelProvider: rowProvider,
     sqliteModelProvider: rowProvider,
     fileModelProvider: file?.modelProvider || null,
@@ -409,6 +424,7 @@ function sessionItemFromRow(row, file, indexItem = null) {
     approvalMode: normalizeText(row.approval_mode || row.approval_policy, 120) || indexItem?.approvalMode || file?.approvalMode || null,
     sandboxPolicy: metadataText(row.sandbox_policy || row.sandboxPolicy, 320) || indexItem?.sandboxPolicy || file?.sandboxPolicy || null,
     rolloutPath: normalizePathText(row.rollout_path, 260) || file?.rolloutPath || file?.relativePath || null,
+    hasUserEvent: Boolean(Number(row.has_user_event || 0)),
     threadRowExists: true,
     archived: Boolean(Number(row.archived || 0) || file?.archivedByLocation),
     updatedAt,
@@ -430,6 +446,7 @@ function sessionItemFromFile(file, indexItem = null) {
     cwd,
     project: cwd ? normalizeText(path.basename(cwd), 80) : null,
     source: indexItem?.source || file.source || 'file',
+    threadSource: indexItem?.source || file.source || null,
     modelProvider: file.modelProvider || null,
     sqliteModelProvider: null,
     fileModelProvider: file.modelProvider || null,
@@ -440,6 +457,7 @@ function sessionItemFromFile(file, indexItem = null) {
     approvalMode: indexItem?.approvalMode || file.approvalMode || null,
     sandboxPolicy: indexItem?.sandboxPolicy || file.sandboxPolicy || null,
     rolloutPath: file.rolloutPath || file.relativePath || null,
+    hasUserEvent: false,
     fileSource: file.source || null,
     threadRowExists: false,
     archived: Boolean(file.archivedByLocation),
@@ -604,12 +622,15 @@ function sqliteSessionColumnValue(item, targetProvider, columnName) {
   if (name === 'id') return item.id;
   if (name === 'title' || name === 'thread_name' || name === 'name') return item.title || item.shortId || item.id;
   if (name === 'cwd' || name === 'workspace' || name === 'workspace_path') return item.cwd || '';
-  if (name === 'source' || name === 'thread_source') return source;
+  if (name === 'source') return source;
+  if (name === 'thread_source') return item.threadSource || (isLikelyUserVisibleThread(item) ? 'user' : source);
   if (name === 'model_provider' || name === 'provider') return targetProvider;
   if (name === 'rollout_path') return item.rolloutPath || item.fileRelativePath || '';
   if (name === 'approval_mode' || name === 'approval_policy') return item.approvalMode || DEFAULT_APPROVAL_MODE;
   if (name === 'sandbox_policy' || name === 'sandbox_mode') return item.sandboxPolicy || DEFAULT_SANDBOX_POLICY;
   if (name === 'archived' || name === 'is_archived') return 0;
+  if (name === 'has_user_event') return isLikelyUserVisibleThread(item) ? 1 : 0;
+  if (name === 'first_user_message' || name === 'preview') return item.title || item.shortId || item.id;
   if (name === 'created_at_ms') return Number.isFinite(createdMs) && createdMs > 0 ? createdMs : Date.now();
   if (name === 'updated_at_ms') return Number.isFinite(updatedMs) && updatedMs > 0 ? updatedMs : Date.now();
   if (name === 'created_at') return Math.floor((Number.isFinite(createdMs) && createdMs > 0 ? createdMs : Date.now()) / 1000);
@@ -634,14 +655,30 @@ function syncSqliteSessions(dataDir, selected, targetProvider) {
     }
 
     let updated = 0;
-    if (hasModelProvider && existingIds.length) {
-      const updateStmt = db.prepare(`
-        UPDATE threads
-        SET model_provider = ?
-        WHERE id = ? AND COALESCE(model_provider, '') <> ?
-      `);
+    if (existingIds.length) {
+      const selectedById = new Map(selected.map((item) => [item.id, item]));
       for (const id of existingIds) {
-        const info = updateStmt.run(targetProvider, id, targetProvider);
+        const item = selectedById.get(id);
+        const sets = [];
+        const values = [];
+        if (hasModelProvider) {
+          sets.push("model_provider = CASE WHEN COALESCE(model_provider, '') <> ? THEN ? ELSE model_provider END");
+          values.push(targetProvider, targetProvider);
+        }
+        if (columnNames.has('has_user_event') && isLikelyUserVisibleThread(item)) {
+          sets.push('has_user_event = 1');
+        }
+        if (columnNames.has('first_user_message')) {
+          sets.push("first_user_message = CASE WHEN COALESCE(first_user_message, '') = '' THEN ? ELSE first_user_message END");
+          values.push(item?.title || item?.shortId || item?.id || '');
+        }
+        if (columnNames.has('preview')) {
+          sets.push("preview = CASE WHEN COALESCE(preview, '') = '' THEN ? ELSE preview END");
+          values.push(item?.title || item?.shortId || item?.id || '');
+        }
+        if (!sets.length) continue;
+        const stmt = db.prepare(`UPDATE threads SET ${sets.join(', ')} WHERE id = ?`);
+        const info = stmt.run(...values, id);
         updated += Number(info.changes || 0);
       }
     }
@@ -860,7 +897,8 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
     const indexCwdMissing = Boolean(item.indexRowExists && expectedCwd && !indexedCwd);
     const indexCwdMismatch = Boolean(item.indexRowExists && expectedCwd && indexedCwd && expectedCwd !== indexedCwd);
     const sqliteMissing = Boolean(!item.threadRowExists && item.fileExists);
-    if (provider === currentModelProvider && !fileProviderMismatch && !indexProviderMismatch && !indexProviderMissing && !indexMissing && !indexArchivedMismatch && !indexCwdMissing && !indexCwdMismatch && !sqliteMissing) {
+    const userEventMissing = Boolean(item.threadRowExists && isLikelyUserVisibleThread(item) && !item.hasUserEvent);
+    if (provider === currentModelProvider && !fileProviderMismatch && !indexProviderMismatch && !indexProviderMissing && !indexMissing && !indexArchivedMismatch && !indexCwdMissing && !indexCwdMismatch && !sqliteMissing && !userEventMissing) {
       rejected.push({ id: item.shortId || shortId(id), reason: 'already_visible' });
       continue;
     }
@@ -913,6 +951,8 @@ export async function repairCodexSessionVisibility({ sessionIds = [], targetProv
       rolloutPath: item.rolloutPath || null,
       approvalMode: item.approvalMode || null,
       sandboxPolicy: item.sandboxPolicy || null,
+      hasUserEvent: Boolean(item.hasUserEvent),
+      likelyUserVisibleThread: isLikelyUserVisibleThread(item),
     })),
     rejected,
     sqliteBackups,

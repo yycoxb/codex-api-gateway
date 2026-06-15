@@ -5832,7 +5832,7 @@ function selectedRepairableSessions() {
 
 function sessionVisibilityLabel(item) {
   if (item.archived) return '\u5df2\u5f52\u6863';
-  if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch || item.sqliteMissing) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
+  if (item.providerMismatch || item.fileProviderMismatch || item.indexProviderMismatch || item.indexProviderMissing || item.indexMissing || item.indexArchivedMismatch || item.indexCwdMissing || item.indexCwdMismatch || item.sqliteMissing || item.userEventMissing) return '\u5f53\u524d\u6a21\u5f0f\u4e0d\u53ef\u89c1';
   return '\u5f53\u524d\u6a21\u5f0f\u53ef\u89c1';
 }
 
@@ -5888,6 +5888,7 @@ function renderSessionManager() {
       item.indexCwdMissing ? '<span class="stats-pill">index cwd \u7f3a\u5931</span>' : '',
       item.indexCwdMismatch ? '<span class="stats-pill">index cwd \u4e0d\u5339\u914d</span>' : '',
       item.sqliteMissing ? '<span class="stats-pill">sqlite \u7f3a\u5931</span>' : '',
+      item.userEventMissing ? '<span class="stats-pill">user event \u7f3a\u5931</span>' : '',
       item.source ? '<span class="stats-pill">' + escapeHtml(item.source) + '</span>' : '',
       item.sizeBytes ? '<span class="stats-pill">' + escapeHtml(formatRequestBytes(item.sizeBytes)) + '</span>' : '',
     ].filter(Boolean);
