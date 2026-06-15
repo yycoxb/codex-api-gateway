@@ -341,7 +341,8 @@ function rowsFromSqlite(dataDir) {
     db.exec('PRAGMA busy_timeout = 3000');
     return db.prepare(`
       SELECT id, title, cwd, source, model_provider, created_at, created_at_ms,
-             updated_at, updated_at_ms, archived, thread_source
+             updated_at, updated_at_ms, archived, thread_source, rollout_path,
+             sandbox_policy, approval_mode, has_user_event
       FROM threads
       ORDER BY COALESCE(updated_at_ms, updated_at * 1000, created_at_ms, created_at * 1000, 0) DESC
       LIMIT 2000
