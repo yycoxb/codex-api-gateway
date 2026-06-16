@@ -36,7 +36,7 @@ import { renderAdminHtml } from './admin-ui.js';
 import { loadWakeupHistory, loadWakeupSchedule, runWakeup, runWakeupScheduleNow, saveWakeupSchedule } from './wakeup.js';
 import { loadQuotaRefreshSchedule, refreshAccountQuota, refreshAccountQuotas, runQuotaRefreshNow, saveQuotaRefreshSchedule } from './quota.js';
 import { getCodexAppState, saveCodexQuickConfig, switchCodexAppAccount, activateCodexApiService } from './codex-app.js';
-import { scheduleCodexAppRestart, scheduleCodexAppRestartWithTask } from './codex-process.js';
+import { closeCodexAppWindow, openCodexAppWindow, scheduleCodexAppRestart, scheduleCodexAppRestartWithTask } from './codex-process.js';
 import { getProxyAccountIdsForRequest, loadLocalAccessConfig, saveLocalAccessConfig } from './local-access.js';
 import { clearLocalAccessAccountFailure, clearLocalAccessStats, extractUsageCapture, loadLocalAccessStats, recordLocalAccessStats } from './local-access-stats.js';
 import { killNodeProcessCleanupCandidates, listNodeProcessCleanupCandidates } from './process-cleaner.js';
@@ -1823,6 +1823,24 @@ async function handleCodexAppState(req, res) {
   return jsonResponse(res, 200, await getCodexAppState());
 }
 
+async function handleCodexAppOpen(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  const result = await openCodexAppWindow({
+    startTimeoutMs: Number(payload.startTimeoutMs || 15000),
+  });
+  return jsonResponse(res, result.ok ? 200 : 500, result);
+}
+
+async function handleCodexAppClose(req, res) {
+  const body = await readBody(req);
+  const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
+  const result = await closeCodexAppWindow({
+    closeTimeoutMs: Number(payload.closeTimeoutMs || 20000),
+  });
+  return jsonResponse(res, result.ok ? 200 : 500, result);
+}
+
 async function handleCodexAppSwitch(req, res, config) {
   const body = await readBody(req);
   const payload = body.length ? JSON.parse(body.toString('utf8')) : {};
@@ -2066,6 +2084,8 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear') return await handleClearLocalAccessStats(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/local-access/stats/clear-account-failure') return await handleClearLocalAccessAccountFailure(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/codex-app/state') return await handleCodexAppState(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/codex-app/open') return await handleCodexAppOpen(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/codex-app/close') return await handleCodexAppClose(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/switch') return await handleCodexAppSwitch(req, res, config);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/api-service') return await handleCodexAppApiService(req, res, config);
       if (req.method === 'POST' && u.pathname === '/_admin/codex-app/remote-api-service/test') return await handleRemoteGatewayTest(req, res);

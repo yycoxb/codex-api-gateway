@@ -6,6 +6,7 @@ const DEFAULT_CLOSE_TIMEOUT_MS = 20_000;
 const DEFAULT_START_TIMEOUT_MS = 15_000;
 
 let lastRestartResult = null;
+let lastControlResult = null;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -261,6 +262,51 @@ async function startCodexApp(timeoutMs = DEFAULT_START_TIMEOUT_MS) {
   };
 }
 
+export async function closeCodexAppWindow(options = {}) {
+  const startedAt = Date.now();
+  const closeTimeoutMs = Number(options.closeTimeoutMs || DEFAULT_CLOSE_TIMEOUT_MS);
+  const before = await listCodexProcesses();
+  const close = await closeCodexApp(before, closeTimeoutMs);
+  const result = {
+    ok: close.ok,
+    action: 'close',
+    platform: process.platform,
+    before,
+    close,
+    startedAt,
+    finishedAt: Date.now(),
+  };
+  lastControlResult = result;
+  return result;
+}
+
+export async function openCodexAppWindow(options = {}) {
+  const startedAt = Date.now();
+  const startTimeoutMs = Number(options.startTimeoutMs || DEFAULT_START_TIMEOUT_MS);
+  const before = await listCodexProcesses();
+  let start = null;
+  let alreadyRunning = false;
+  if (before.length) {
+    alreadyRunning = true;
+  } else {
+    start = await startCodexApp(startTimeoutMs);
+  }
+  const running = alreadyRunning ? before : (start?.running || []);
+  const result = {
+    ok: alreadyRunning || Boolean(start?.ok),
+    action: 'open',
+    platform: process.platform,
+    alreadyRunning,
+    before,
+    start,
+    running,
+    startedAt,
+    finishedAt: Date.now(),
+  };
+  lastControlResult = result;
+  return result;
+}
+
 export async function restartCodexApp(options = {}) {
   const startedAt = Date.now();
   const closeTimeoutMs = Number(options.closeTimeoutMs || DEFAULT_CLOSE_TIMEOUT_MS);
@@ -326,4 +372,8 @@ export function scheduleCodexAppRestartWithTask(options = {}, beforeStart) {
 
 export function getLastCodexAppRestartResult() {
   return lastRestartResult;
+}
+
+export function getLastCodexAppControlResult() {
+  return lastControlResult;
 }

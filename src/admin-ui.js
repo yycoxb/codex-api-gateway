@@ -3627,6 +3627,20 @@ export function renderAdminHtml() {
         <section class="panel-card codex-app-config">
           <div class="card-head">
             <div>
+              <h2>Codex App 控制</h2>
+              <p class="panel-subtitle">只控制 Codex App 本体，不会重启 Gateway，也不会修改账号文件。</p>
+            </div>
+          </div>
+          <div class="inline-actions">
+            <button class="primary" id="openCodexAppBtn">${icons.play} 打开 Codex App</button>
+            <button id="closeCodexAppBtn">${icons.power} 关闭 Codex App</button>
+          </div>
+          <div class="api-health-result" id="codexAppProcessControlResult">关闭按钮会结束 Codex App 主进程；如果当前管理页就在 Codex App 内，窗口会一起关闭。</div>
+        </section>
+
+        <section class="panel-card codex-app-config">
+          <div class="card-head">
+            <div>
               <h2>快速配置</h2>
               <p class="panel-subtitle">复刻开源项目里的 Codex quick config：1M 上下文和自动压缩阈值。</p>
             </div>
@@ -6696,6 +6710,62 @@ async function reloadCodexAppState() {
   return data;
 }
 
+function setCodexAppProcessControlText(text, bad) {
+  const box = $('codexAppProcessControlResult');
+  if (!box) return;
+  box.textContent = text || '';
+  box.classList.toggle('bad', Boolean(bad));
+}
+
+function summarizeCodexAppControlResult(action, data) {
+  const beforeCount = Array.isArray(data?.before) ? data.before.length : 0;
+  const runningCount = Array.isArray(data?.running) ? data.running.length : 0;
+  if (action === 'open') {
+    if (data?.alreadyRunning) return 'Codex App 已在运行，检测到 ' + beforeCount + ' 个主进程。';
+    if (data?.ok) return '已打开 Codex App，检测到 ' + runningCount + ' 个主进程。';
+    return '打开 Codex App 失败：' + String(data?.start?.error || data?.error || 'unknown');
+  }
+  const remainingCount = Array.isArray(data?.close?.remaining) ? data.close.remaining.length : 0;
+  if (data?.ok) {
+    if (!beforeCount) return 'Codex App 原本未运行。';
+    return '已关闭 Codex App，结束 ' + beforeCount + ' 个主进程。';
+  }
+  return '关闭 Codex App 失败，仍有 ' + remainingCount + ' 个主进程未退出。';
+}
+
+async function controlCodexAppProcess(action) {
+  const isClose = action === 'close';
+  if (isClose && !confirm('确定关闭 Codex App 吗？\\n\\n如果当前管理页就在 Codex App 内，窗口会一起关闭；Gateway 本身不会重启。')) return;
+  const openBtn = $('openCodexAppBtn');
+  const closeBtn = $('closeCodexAppBtn');
+  if (openBtn) openBtn.disabled = true;
+  if (closeBtn) closeBtn.disabled = true;
+  const label = isClose ? '关闭' : '打开';
+  try {
+    setCodexAppProcessControlText('正在' + label + ' Codex App...');
+    setOutput('正在' + label + ' Codex App...');
+    const res = await fetch('/_admin/codex-app/' + (isClose ? 'close' : 'open'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(isClose ? { closeTimeoutMs: 20000 } : { startTimeoutMs: 15000 })
+    });
+    const data = await res.json();
+    setOutput(data);
+    const text = summarizeCodexAppControlResult(action, data);
+    setCodexAppProcessControlText(text, !data.ok);
+    toast(text);
+    if (!isClose) await reloadCodexAppState();
+  } catch (err) {
+    const text = label + ' Codex App 失败：' + String(err?.message || err);
+    setCodexAppProcessControlText(text, true);
+    setOutput(text);
+    toast(text);
+  } finally {
+    if (openBtn) openBtn.disabled = false;
+    if (closeBtn) closeBtn.disabled = false;
+  }
+}
+
 async function switchCodexAppAccount(accountId) {
   const account = (state.data.accounts || []).find(function(item) { return item.id === accountId; });
   const label = account ? maskEmail(account.email) : accountId;
@@ -7706,6 +7776,8 @@ $('overviewRefreshAllBtn').onclick = function() { refreshQuota(allAccountIds());
 $('saveQuotaAutoRefreshBtn').onclick = function() { saveQuotaAutoRefresh(); };
 $('runQuotaAutoRefreshNowBtn').onclick = runQuotaAutoRefreshNow;
 $('reloadCodexAppBtn').onclick = function() { reloadCodexAppState().then(function() { toast('已重新检测 Codex App'); }); };
+$('openCodexAppBtn').onclick = function() { controlCodexAppProcess('open'); };
+$('closeCodexAppBtn').onclick = function() { controlCodexAppProcess('close'); };
 $('saveQuickConfigBtn').onclick = saveQuickConfig;
 $('testRemoteGatewayBtn').onclick = function() { testRemoteGateway().catch(function(err) { setRemoteGatewayStatus('测试失败', false); setOutput(String(err)); }); };
 $('activateRemoteGatewayBtn').onclick = function() { activateRemoteGatewayForCodexApp().catch(function(err) { setRemoteGatewayStatus('写入失败', false); setOutput(String(err)); }); };
