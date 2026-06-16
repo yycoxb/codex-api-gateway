@@ -3795,7 +3795,6 @@ export function renderAdminHtml() {
               <button id="refreshSessionsBtn">${icons.refresh} 刷新</button>
               <button id="selectAllSessionsBtn">全选可删</button>
               <button id="selectRepairableSessionsBtn">全选可修复</button>
-              <button id="selectSidebarSessionsBtn">全选侧栏同步</button>
               <button id="clearSessionSelectionBtn">清空</button>
               <button id="repairSelectedSessionsBtn">${icons.play} 修复可见性</button>
               <button id="repairSessionSidebarBtn">${icons.play} 同步侧栏显示</button>
@@ -5981,13 +5980,6 @@ function selectAllRepairableSessions() {
   renderSessionManager();
 }
 
-function selectAllSidebarSessions() {
-  (state.sessions || []).forEach(function(item) {
-    if (item.canRefreshSidebar) state.selectedSessionIds.add(item.id);
-  });
-  renderSessionManager();
-}
-
 function clearSessionSelection() {
   state.selectedSessionIds.clear();
   renderSessionManager();
@@ -7721,7 +7713,6 @@ $('activateApiServiceBtn').onclick = activateApiServiceForCodexApp;
 if ($('refreshSessionsBtn')) $('refreshSessionsBtn').onclick = loadSessions;
 if ($('selectAllSessionsBtn')) $('selectAllSessionsBtn').onclick = selectAllDeletableSessions;
 if ($('selectRepairableSessionsBtn')) $('selectRepairableSessionsBtn').onclick = selectAllRepairableSessions;
-if ($('selectSidebarSessionsBtn')) $('selectSidebarSessionsBtn').onclick = selectAllSidebarSessions;
 if ($('clearSessionSelectionBtn')) $('clearSessionSelectionBtn').onclick = clearSessionSelection;
 if ($('repairSelectedSessionsBtn')) $('repairSelectedSessionsBtn').onclick = repairSelectedSessionsVisibility;
 if ($('repairSessionSidebarBtn')) $('repairSessionSidebarBtn').onclick = repairSelectedSessionsSidebar;
