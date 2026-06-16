@@ -48,6 +48,7 @@ import {
   repairCodexSessionSidebar,
   repairCodexSessionVisibility,
 } from './session-manager.js';
+import { disableTunAndCloseClashVerge, getClashVergeState, openClashVergeAndEnableTun } from './clash-verge.js';
 import { getTokenKeeperState, runTokenKeeperNow } from './token-keeper.js';
 import {
   cancelCodexOAuthLogin,
@@ -2022,6 +2023,20 @@ async function handleProcessCleanupKill(req, res) {
   return jsonResponse(res, result.ok ? 200 : 400, result);
 }
 
+async function handleClashVergeState(req, res) {
+  return jsonResponse(res, 200, await getClashVergeState());
+}
+
+async function handleClashVergeOpenTun(req, res) {
+  const result = await openClashVergeAndEnableTun();
+  return jsonResponse(res, result.ok ? 200 : 500, result);
+}
+
+async function handleClashVergeCloseTunExit(req, res) {
+  const result = await disableTunAndCloseClashVerge();
+  return jsonResponse(res, result.ok ? 200 : 500, result);
+}
+
 function handleShutdown(req, res) {
   jsonResponse(res, 200, { ok: true, message: 'Codex API Gateway 正在停止' });
   setTimeout(() => process.exit(0), 250);
@@ -2099,6 +2114,9 @@ export function createServer(config) {
       if (req.method === 'POST' && u.pathname === '/_admin/sessions/repair-project-assignment') return await handleSessionRepairProjectAssignments(req, res);
       if (req.method === 'GET' && u.pathname === '/_admin/process-cleanup') return await handleProcessCleanupList(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/process-cleanup/kill') return await handleProcessCleanupKill(req, res);
+      if (req.method === 'GET' && u.pathname === '/_admin/clash-verge/state') return await handleClashVergeState(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/clash-verge/open-tun') return await handleClashVergeOpenTun(req, res);
+      if (req.method === 'POST' && u.pathname === '/_admin/clash-verge/close-tun-exit') return await handleClashVergeCloseTunExit(req, res);
       if (req.method === 'POST' && u.pathname === '/_admin/shutdown') return handleShutdown(req, res);
 
       const key = getLocalApiKey(req);

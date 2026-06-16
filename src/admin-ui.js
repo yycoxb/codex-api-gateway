@@ -3843,6 +3843,21 @@ export function renderAdminHtml() {
         <section class="panel-card">
           <div class="card-head">
             <div>
+              <h2>Clash Verge TUN 控制</h2>
+              <p class="panel-subtitle">控制 E:\\BaiduNetdiskDownload\\clash-verge.exe：打开程序并开启 TUN，或先关闭 TUN 再退出程序。</p>
+            </div>
+            <span class="status-pill" id="clashVergeStatus">未检测</span>
+          </div>
+          <div class="inline-actions">
+            <button class="primary" id="openClashTunBtn">${icons.play} 打开 Clash 并开启 TUN</button>
+            <button id="closeClashTunExitBtn">${icons.power} 关闭 TUN 并退出 Clash</button>
+          </div>
+          <div class="api-health-result" id="clashVergeHint">通过本机 Mihomo 命名管道控制 TUN，不读取订阅、节点或密钥。</div>
+        </section>
+
+        <section class="panel-card">
+          <div class="card-head">
+            <div>
               <h2>MCP / Node 进程</h2>
               <p class="panel-subtitle">先扫描，再选择“可清理”的进程。命令行会做密钥脱敏和长度截断。</p>
             </div>
@@ -4208,6 +4223,7 @@ const state = {
   nodeProcessesLoading: false,
   selectedNodeProcessIds: new Set(),
   nodeProcessSummary: null,
+  clashVergeBusy: false,
   addTab: 'oauth',
   oauthLoginId: null,
   oauthUrl: '',
@@ -6036,6 +6052,86 @@ async function deleteSelectedSessions() {
   await loadSessions();
 }
 
+function setClashVergeUiState(text, bad) {
+  if ($('clashVergeStatus')) {
+    $('clashVergeStatus').textContent = text || '未知';
+    $('clashVergeStatus').classList.toggle('bad', Boolean(bad));
+  }
+  if ($('clashVergeHint')) {
+    $('clashVergeHint').classList.toggle('bad', Boolean(bad));
+  }
+}
+
+function updateClashVergeButtons() {
+  if ($('openClashTunBtn')) $('openClashTunBtn').disabled = state.clashVergeBusy;
+  if ($('closeClashTunExitBtn')) $('closeClashTunExitBtn').disabled = state.clashVergeBusy;
+}
+
+function renderClashVergeState(data) {
+  const config = data && data.config ? data.config : null;
+  const running = Boolean(data && data.running);
+  const coreRunning = Boolean(data && data.coreRunning);
+  const tunText = config ? (config.tunEnabled ? 'TUN 已开启' : 'TUN 已关闭') : 'TUN 未检测';
+  const appText = running ? '程序运行中' : (coreRunning ? '核心运行中' : '程序未运行');
+  setClashVergeUiState(appText + ' · ' + tunText, data && data.controlOk === false);
+  if ($('clashVergeHint')) {
+    const processCount = Array.isArray(data?.processes) ? data.processes.length : 0;
+    $('clashVergeHint').textContent = data && data.controlOk
+      ? ('已连接 Mihomo 管道；' + appText + '，' + tunText + '，进程 ' + processCount + ' 个。')
+      : ('未连接 Mihomo 管道；' + appText + '。打开 Clash 后再开启 TUN。');
+  }
+}
+
+async function loadClashVergeState() {
+  const res = await fetch('/_admin/clash-verge/state?_=' + Date.now(), { cache: 'no-store' });
+  const data = await res.json();
+  renderClashVergeState(data);
+  return data;
+}
+
+function summarizeClashVergeAction(action, data) {
+  if (data?.alreadyStopped) return 'Clash Verge 原本未运行。';
+  if (action === 'open') {
+    if (data?.ok) return (data.started ? '已启动 Clash Verge，' : 'Clash Verge 已在运行，') + 'TUN 已开启。';
+    return '打开 Clash 并开启 TUN 失败：' + String(data?.error || data?.state?.controlError || 'unknown');
+  }
+  if (data?.ok) return '已关闭 TUN，并退出 Clash Verge 主程序。';
+  return '关闭 TUN / 退出 Clash 失败：' + String(data?.error || 'unknown');
+}
+
+async function controlClashVerge(action) {
+  const isClose = action === 'close';
+  if (isClose && !confirm('确定关闭 TUN 并退出 Clash Verge 吗？\\n\\n会先关闭 TUN，再关闭 clash-verge.exe；Gateway 不会重启。')) return;
+  state.clashVergeBusy = true;
+  updateClashVergeButtons();
+  const label = isClose ? '关闭 TUN 并退出 Clash' : '打开 Clash 并开启 TUN';
+  try {
+    setClashVergeUiState('执行中', false);
+    if ($('clashVergeHint')) $('clashVergeHint').textContent = '正在' + label + '...';
+    setOutput('正在' + label + '...');
+    const res = await fetch('/_admin/clash-verge/' + (isClose ? 'close-tun-exit' : 'open-tun'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await res.json();
+    setOutput(data);
+    const text = summarizeClashVergeAction(action, data);
+    toast(text);
+    if (data.state) renderClashVergeState(data.state);
+    await loadClashVergeState().catch(function() {});
+    if (!data.ok && $('clashVergeHint')) $('clashVergeHint').textContent = text;
+  } catch (err) {
+    const text = label + '失败：' + String(err?.message || err);
+    setClashVergeUiState('执行失败', true);
+    if ($('clashVergeHint')) $('clashVergeHint').textContent = text;
+    setOutput(text);
+    toast(text);
+  } finally {
+    state.clashVergeBusy = false;
+    updateClashVergeButtons();
+  }
+}
+
 function selectedKillableNodeProcesses() {
   return (state.nodeProcesses || []).filter(function(item) {
     return item.killable && state.selectedNodeProcessIds.has(String(item.pid));
@@ -6383,6 +6479,7 @@ function setActiveTab(name) {
   } else if (name === 'processes') {
     renderProcessCleanup();
     if (!state.nodeProcessesLoaded && !state.nodeProcessesLoading) loadProcessCleanup();
+    loadClashVergeState().catch(function() {});
   }
 }
 
@@ -7785,6 +7882,8 @@ $('apiServiceTargetMode').onchange = syncApiServiceTargetMode;
 $('apiTestRemoteGatewayBtn').onclick = function() { testRemoteGateway('apiCard').catch(function(err) { setRemoteGatewayStatus('测试失败', false, 'apiCard'); setOutput(String(err)); }); };
 $('apiRemoteGatewayRememberKey').onchange = function() { updateRememberRemoteGatewayKeyFromControl('apiCard'); };
 $('remoteGatewayRememberKey').onchange = function() { updateRememberRemoteGatewayKeyFromControl(); };
+$('openClashTunBtn').onclick = function() { controlClashVerge('open'); };
+$('closeClashTunExitBtn').onclick = function() { controlClashVerge('close'); };
 $('runWakeupBtn').onclick = function() { runWakeup(); };
 $('refreshSelectedQuotaBtn').onclick = function() { refreshQuota(); };
 $('loadWakeupHistoryBtn').onclick = loadWakeupHistory;
