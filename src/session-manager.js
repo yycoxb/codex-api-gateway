@@ -808,7 +808,7 @@ function sessionItemFromFile(file, indexItem = null) {
   };
 }
 
-export async function listCodexSessions({ archivedOnly = true } = {}) {
+export async function listCodexSessions({ archivedOnly = true, includeChildThreads = false } = {}) {
   const startedAt = nowMs();
   const dataDir = path.resolve(codexHome());
   const [rows, files, index, currentModelProvider, projectState] = await Promise.all([
@@ -847,20 +847,25 @@ export async function listCodexSessions({ archivedOnly = true } = {}) {
   }
 
   items.sort((a, b) => Number(b.updatedAt || 0) - Number(a.updatedAt || 0));
+  const allItems = items;
+  const visibleItems = includeChildThreads ? allItems : allItems.filter((item) => !item.isSubagentThread);
+  const childThreadCount = allItems.filter((item) => item.isSubagentThread).length;
   return {
     ok: true,
     archivedOnly: Boolean(archivedOnly),
-    count: items.length,
+    includeChildThreads: Boolean(includeChildThreads),
+    count: visibleItems.length,
     currentModelProvider,
-    providerMismatchCount: items.filter((item) => item.providerMismatch).length,
-    repairableVisibilityCount: items.filter((item) => item.canRepairVisibility).length,
-    sidebarRefreshableCount: items.filter((item) => item.canRefreshSidebar).length,
-    sidebarVisibleCount: items.filter((item) => item.sidebarVisibleInCurrentProvider).length,
-    childThreadCount: items.filter((item) => item.isSubagentThread).length,
+    providerMismatchCount: visibleItems.filter((item) => item.providerMismatch).length,
+    repairableVisibilityCount: visibleItems.filter((item) => item.canRepairVisibility).length,
+    sidebarRefreshableCount: visibleItems.filter((item) => item.canRefreshSidebar).length,
+    sidebarVisibleCount: visibleItems.filter((item) => item.sidebarVisibleInCurrentProvider).length,
+    childThreadCount,
+    hiddenChildThreadCount: includeChildThreads ? 0 : childThreadCount,
     projectStateAvailable: Boolean(projectState),
     projectCandidateCount: projectState?.candidates.length || 0,
-    projectAssignmentRepairableCount: items.filter((item) => item.canRepairProjectAssignment).length,
-    sessions: items,
+    projectAssignmentRepairableCount: visibleItems.filter((item) => item.canRepairProjectAssignment).length,
+    sessions: visibleItems,
     startedAt,
     finishedAt: nowMs(),
   };

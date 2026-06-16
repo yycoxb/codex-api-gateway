@@ -4187,6 +4187,7 @@ const state = {
   sessionProviderMismatchCount: 0,
   sessionRepairableVisibilityCount: 0,
   sessionChildThreadCount: 0,
+  sessionHiddenChildThreadCount: 0,
   selectedSessionIds: new Set(),
   nodeProcesses: [],
   nodeProcessesLoaded: false,
@@ -5846,6 +5847,7 @@ function syncSessionControls() {
     $('sessionManagerStatus').textContent = state.sessionsLoading
       ? '\u52a0\u8f7d\u4e2d'
       : ('provider=' + provider + ' \u00b7 \u5df2\u52a0\u8f7d ' + (state.sessions || []).length + ' \u4e2a'
+        + (state.sessionHiddenChildThreadCount ? (' \u00b7 \u5df2\u9690\u85cf\u5b50\u4f1a\u8bdd ' + state.sessionHiddenChildThreadCount) : '')
         + (state.sessionRepairableVisibilityCount ? (' \u00b7 \u53ef\u4fee\u590d ' + state.sessionRepairableVisibilityCount) : '')
         + ((selectedDelete || selectedRepair) ? (' \u00b7 \u5df2\u9009 \u5220\u9664' + selectedDelete + '/\u4fee\u590d' + selectedRepair) : ''));
   }
@@ -5929,6 +5931,7 @@ async function loadSessions() {
     state.sessionProviderMismatchCount = Number(data.providerMismatchCount || 0);
     state.sessionRepairableVisibilityCount = Number(data.repairableVisibilityCount || 0);
     state.sessionChildThreadCount = Number(data.childThreadCount || 0);
+    state.sessionHiddenChildThreadCount = Number(data.hiddenChildThreadCount || 0);
     state.sessionsLoaded = true;
     const ids = new Set(state.sessions.map(function(item) { return item.id; }));
     Array.from(state.selectedSessionIds).forEach(function(id) {
@@ -5936,7 +5939,7 @@ async function loadSessions() {
     });
     if ($('sessionManagerHint')) {
       const provider = state.sessionsCurrentProvider || 'openai';
-      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u5b50\u4f1a\u8bdd ' + state.sessionChildThreadCount + ' \u4e2a\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\u3002\u4fee\u590d\u4f1a\u8bdd\u540e\u4f1a\u8c03\u7528\u5b98\u65b9 Codex app-server \u91cd\u5efa\u7d22\u5f15\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
+      $('sessionManagerHint').textContent = '\u5f53\u524d provider=' + provider + '\u3002\u5df2\u52a0\u8f7d ' + state.sessions.length + ' \u4e2a\u4f1a\u8bdd\uff1b\u5df2\u9690\u85cf\u5b50\u4f1a\u8bdd ' + state.sessionHiddenChildThreadCount + ' \u4e2a\uff1b\u53ef\u4fee\u590d\u53ef\u89c1\u6027 ' + state.sessionRepairableVisibilityCount + ' \u4e2a\u3002\u4fee\u590d\u4f1a\u8bdd\u540e\u4f1a\u8c03\u7528\u5b98\u65b9 Codex app-server \u91cd\u5efa\u7d22\u5f15\uff0c\u4e0d\u5c55\u793a prompt/content/token\u3002';
     }
     renderSessionManager();
   } catch (err) {

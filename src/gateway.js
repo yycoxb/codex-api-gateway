@@ -1950,7 +1950,8 @@ async function handleCodexRepairSessions(req, res) {
 
 async function handleSessionList(req, res, u) {
   const archivedOnly = u.searchParams.get('archived') !== '0';
-  return jsonResponse(res, 200, await listCodexSessions({ archivedOnly }));
+  const includeChildThreads = u.searchParams.get('includeChild') === '1';
+  return jsonResponse(res, 200, await listCodexSessions({ archivedOnly, includeChildThreads }));
 }
 
 async function handleSessionDelete(req, res) {
