@@ -197,36 +197,75 @@ async function closeCodexApp(processes, timeoutMs = DEFAULT_CLOSE_TIMEOUT_MS) {
   };
 }
 
+function safePowerShellErrorMessage(error, fallback = '启动 Codex App 失败') {
+  const raw = String(error?.stderr || error?.stdout || error?.message || error || '').trim();
+  if (!raw) return fallback;
+  if (raw.includes('未找到 Codex App 的系统启动入口')) return '未找到 Codex App 的系统启动入口';
+  const line = raw
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .find((item) => item && !item.includes('-Command') && !item.startsWith('At line:'));
+  return (line || fallback).slice(0, 240);
+}
+
 async function startWindowsCodexApp(timeoutMs = DEFAULT_START_TIMEOUT_MS) {
   const script = String.raw`
 $ErrorActionPreference = 'Stop'
-$entry = Get-StartApps | Where-Object { $_.AppID -like 'OpenAI.Codex_*' } | Select-Object -First 1
-if ($entry -and -not [string]::IsNullOrWhiteSpace($entry.AppID)) {
-  $target = 'shell:AppsFolder\' + [string]$entry.AppID.Trim()
-  Start-Process -FilePath $target
-  Write-Output ('STARTED|store-appid|' + $target)
+function Start-CodexTarget([string]$kind, [string]$target) {
+  if ([string]::IsNullOrWhiteSpace($target)) { return }
+  if ($target -like 'shell:AppsFolder\*') {
+    Start-Process -FilePath 'explorer.exe' -ArgumentList $target
+  } else {
+    Start-Process -FilePath $target
+  }
+  Write-Output ('STARTED|' + $kind + '|' + $target)
   exit 0
 }
-$pkg = Get-AppxPackage -Name 'OpenAI.Codex' -ErrorAction SilentlyContinue |
+$entry = Get-StartApps | Where-Object {
+  $_.AppID -like 'OpenAI.Codex_*' -or $_.AppID -match 'Codex' -or $_.Name -match 'Codex'
+} | Select-Object -First 1
+if ($entry -and -not [string]::IsNullOrWhiteSpace($entry.AppID)) {
+  $target = 'shell:AppsFolder\' + [string]$entry.AppID.Trim()
+  Start-CodexTarget 'start-apps' $target
+}
+$pkg = Get-AppxPackage -ErrorAction SilentlyContinue |
+  Where-Object { $_.Name -eq 'OpenAI.Codex' -or $_.Name -match 'Codex' -or $_.PackageFamilyName -match 'Codex' } |
   Sort-Object -Property Version -Descending |
   Select-Object -First 1
 if ($pkg -and -not [string]::IsNullOrWhiteSpace($pkg.PackageFamilyName)) {
   $target = 'shell:AppsFolder\' + [string]($pkg.PackageFamilyName.Trim() + '!App')
-  Start-Process -FilePath $target
-  Write-Output ('STARTED|appx-family|' + $target)
-  exit 0
+  Start-CodexTarget 'appx-family' $target
 }
+$candidates = @()
 if ($pkg -and -not [string]::IsNullOrWhiteSpace($pkg.InstallLocation)) {
-  $exe = Join-Path ([string]$pkg.InstallLocation.Trim()) 'app\Codex.exe'
-  if (Test-Path $exe) {
-    Start-Process -FilePath $exe
-    Write-Output ('STARTED|exe-path|' + $exe)
-    exit 0
-  }
+  $candidates += (Join-Path ([string]$pkg.InstallLocation.Trim()) 'app\Codex.exe')
+}
+$runningExe = Get-CimInstance Win32_Process -Filter "Name='Codex.exe'" -ErrorAction SilentlyContinue |
+  Where-Object { [string]$_.ExecutablePath -and [string]$_.ExecutablePath -notlike '*\resources\codex.exe' } |
+  Select-Object -ExpandProperty ExecutablePath -First 1
+if ($runningExe) { $candidates += [string]$runningExe }
+$windowsApps = Join-Path $env:ProgramFiles 'WindowsApps'
+if (Test-Path $windowsApps) {
+  $candidates += @(Get-ChildItem -LiteralPath $windowsApps -Directory -Filter 'OpenAI.Codex_*' -ErrorAction SilentlyContinue |
+    Sort-Object -Property LastWriteTime -Descending |
+    ForEach-Object { Join-Path $_.FullName 'app\Codex.exe' })
+}
+if ($env:LOCALAPPDATA) {
+  $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\Codex\Codex.exe')
+  $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\codex\Codex.exe')
+  $candidates += (Join-Path $env:LOCALAPPDATA 'Programs\OpenAI Codex\Codex.exe')
+}
+foreach ($exe in @($candidates | Where-Object { $_ } | Select-Object -Unique)) {
+  if (Test-Path $exe) { Start-CodexTarget 'exe-path' $exe }
 }
 throw '未找到 Codex App 的系统启动入口'
 `;
-  const stdout = await runPowerShell(script, 15_000);
+  let stdout = '';
+  try {
+    stdout = await runPowerShell(script, 15_000);
+  } catch (error) {
+    throw new Error(safePowerShellErrorMessage(error));
+  }
   const wait = await waitForCodexProcesses(timeoutMs);
   return {
     ok: wait.ok,
@@ -286,10 +325,23 @@ export async function openCodexAppWindow(options = {}) {
   const before = await listCodexProcesses();
   let start = null;
   let alreadyRunning = false;
+  let error = null;
   if (before.length) {
     alreadyRunning = true;
   } else {
-    start = await startCodexApp(startTimeoutMs);
+    try {
+      start = await startCodexApp(startTimeoutMs);
+    } catch (err) {
+      error = String(err?.message || err);
+      start = {
+        ok: false,
+        method: 'error',
+        target: null,
+        pids: [],
+        running: [],
+        error,
+      };
+    }
   }
   const running = alreadyRunning ? before : (start?.running || []);
   const result = {
@@ -300,6 +352,7 @@ export async function openCodexAppWindow(options = {}) {
     before,
     start,
     running,
+    error,
     startedAt,
     finishedAt: Date.now(),
   };

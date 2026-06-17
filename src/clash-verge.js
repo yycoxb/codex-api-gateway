@@ -1,12 +1,20 @@
 import { execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 
 const CLASH_VERGE_EXE_PATH = 'E:\\BaiduNetdiskDownload\\clash-verge.exe';
 const CLASH_VERGE_PIPE = '\\\\.\\pipe\\verge-mihomo';
+const CLASH_VERGE_CONFIG_DIR = path.join(
+  process.env.APPDATA || '',
+  'io.github.clash-verge-rev.clash-verge-rev',
+);
+const CLASH_VERGE_SETTINGS_PATH = path.join(CLASH_VERGE_CONFIG_DIR, 'verge.yaml');
+const CLASH_VERGE_GENERATED_CONFIG_PATH = path.join(CLASH_VERGE_CONFIG_DIR, 'config.yaml');
+const CLASH_VERGE_RUNTIME_CONFIG_PATH = path.join(CLASH_VERGE_CONFIG_DIR, 'clash-verge.yaml');
 const CLASH_PROCESS_NAMES = new Set(['clash-verge.exe', 'clash-verge-service.exe', 'verge-mihomo.exe']);
 const CLASH_UI_PROCESS_NAME = 'clash-verge.exe';
 
@@ -211,6 +219,75 @@ async function setClashTunEnabled(enabled) {
   return state;
 }
 
+function replaceTopLevelBoolean(content, key, enabled) {
+  const value = enabled ? 'true' : 'false';
+  const pattern = new RegExp(`^(\\s*${key}\\s*:\\s*).*$`, 'm');
+  if (!pattern.test(content)) return content;
+  return content.replace(pattern, `$1${value}`);
+}
+
+function replaceSectionBoolean(content, section, key, enabled) {
+  const value = enabled ? 'true' : 'false';
+  const newline = content.includes('\r\n') ? '\r\n' : '\n';
+  const lines = content.split(/\r?\n/);
+  let sectionIndex = -1;
+  let sectionIndent = 0;
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = new RegExp(`^(\\s*)${section}\\s*:\\s*$`).exec(lines[i]);
+    if (match) {
+      sectionIndex = i;
+      sectionIndent = match[1].length;
+      break;
+    }
+  }
+  if (sectionIndex < 0) return content;
+  for (let i = sectionIndex + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim()) continue;
+    const indent = (/^(\s*)/.exec(line) || [''])[1].length;
+    if (indent <= sectionIndent) break;
+    const keyMatch = new RegExp(`^(\\s*)${key}\\s*:\\s*.*$`).exec(line);
+    if (keyMatch) {
+      lines[i] = `${keyMatch[1]}${key}: ${value}`;
+      return lines.join(newline);
+    }
+  }
+  return content;
+}
+
+function updateTextFileIfExists(filePath, updater) {
+  if (!filePath || !fs.existsSync(filePath)) return { file: path.basename(filePath || ''), exists: false, changed: false };
+  const before = fs.readFileSync(filePath, 'utf8');
+  const after = updater(before);
+  if (after !== before) {
+    fs.writeFileSync(filePath, after, 'utf8');
+    return { file: path.basename(filePath), exists: true, changed: true };
+  }
+  return { file: path.basename(filePath), exists: true, changed: false };
+}
+
+function persistClashTunEnabled(enabled) {
+  const changes = [];
+  changes.push(updateTextFileIfExists(
+    CLASH_VERGE_SETTINGS_PATH,
+    (text) => replaceTopLevelBoolean(text, 'enable_tun_mode', enabled),
+  ));
+  changes.push(updateTextFileIfExists(
+    CLASH_VERGE_GENERATED_CONFIG_PATH,
+    (text) => replaceSectionBoolean(text, 'tun', 'enable', enabled),
+  ));
+  changes.push(updateTextFileIfExists(
+    CLASH_VERGE_RUNTIME_CONFIG_PATH,
+    (text) => replaceSectionBoolean(text, 'tun', 'enable', enabled),
+  ));
+  return {
+    ok: true,
+    enabled: Boolean(enabled),
+    changed: changes.some((item) => item.changed),
+    files: changes,
+  };
+}
+
 function startClashVergeProcess() {
   if (!fs.existsSync(CLASH_VERGE_EXE_PATH)) {
     throw new Error(`未找到 Clash Verge 程序: ${CLASH_VERGE_EXE_PATH}`);
@@ -242,7 +319,7 @@ async function closeClashVergeUi(processes) {
     .sort((a, b) => a - b);
   const errors = [];
   for (const pid of targets) {
-    await execHidden('taskkill.exe', ['/PID', String(pid), '/T', '/F'], { timeout: 10_000 })
+    await execHidden('taskkill.exe', ['/PID', String(pid), '/F'], { timeout: 10_000 })
       .catch((error) => {
         errors.push({
           pid,
@@ -266,6 +343,7 @@ export async function openClashVergeAndEnableTun() {
   const startedAt = Date.now();
   const before = await listClashVergeProcesses();
   const wasRunning = before.some((entry) => entry.name.toLowerCase() === CLASH_UI_PROCESS_NAME);
+  const persistence = persistClashTunEnabled(true);
   if (!wasRunning) startClashVergeProcess();
   await waitForMihomoControl(18_000);
   const state = await setClashTunEnabled(true);
@@ -278,6 +356,7 @@ export async function openClashVergeAndEnableTun() {
     before,
     after,
     state,
+    persistence,
     startedAt,
     finishedAt: Date.now(),
   };
@@ -303,8 +382,11 @@ export async function disableTunAndCloseClashVerge() {
     };
   }
   let state = null;
+  let persistence = null;
   try {
+    persistence = persistClashTunEnabled(false);
     state = await setClashTunEnabled(false);
+    await sleep(1_000);
   } catch (error) {
     return {
       ok: false,
@@ -312,6 +394,7 @@ export async function disableTunAndCloseClashVerge() {
       stage: 'disable-tun',
       error: String(error?.message || error),
       before,
+      persistence,
       startedAt,
       finishedAt: Date.now(),
     };
@@ -324,6 +407,7 @@ export async function disableTunAndCloseClashVerge() {
     exePath: CLASH_VERGE_EXE_PATH,
     before,
     state,
+    persistence,
     close,
     after,
     startedAt,
